@@ -1,7 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60" fill="none">
-  <circle cx="25" cy="30" r="22" stroke="#1e3a5f" stroke-width="3" fill="none"/>
-  <rect x="18" y="14" width="14" height="32" rx="2" fill="#1e3a5f"/>
-  <text x="22" y="40" font-family="Arial, sans-serif" font-weight="bold" font-size="22" fill="white">1</text>
-  <text x="52" y="28" font-family="Arial, sans-serif" font-weight="bold" font-size="18" fill="#1e3a5f">NE SOURCE</text>
-  <text x="52" y="48" font-family="Arial, sans-serif" font-weight="bold" font-size="18" fill="#1e3a5f">FUNDING</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 70" fill="none">
+  <!-- Circle with 1 -->
+  <circle cx="30" cy="35" r="26" stroke="#1e3a5f" stroke-width="3" fill="none"/>
+  <rect x="21" y="12" width="18" height="46" rx="2" fill="#1e3a5f"/>
+  <text x="26" y="46" font-family="Arial, sans-serif" font-weight="bold" font-size="30" fill="white">1</text>
+  
+  <!-- NE SOURCE text -->
+  <text x="62" y="30" font-family="Arial, sans-serif" font-weight="bold" font-size="22" fill="#1e3a5f" letter-spacing="1">NE SOURCE</text>
+  
+  <!-- FUNDING text -->
+  <text x="62" y="56" font-family="Arial, sans-serif" font-weight="bold" font-size="22" fill="#1e3a5f" letter-spacing="1">FUNDING</text>
 </svg>

@@ -22,8 +22,7 @@ const Footer = () => (
         {/* Brand */}
         <div className="lg:col-span-1">
           <div className="flex items-center gap-2 mb-4">
-            <img src="/logo.svg" alt="One Source Funding" className="h-10 brightness-0 invert" />
-            <span className="font-display text-xl font-bold">One Source Funding</span>
+            <img src="/logo.svg" alt="One Source Funding" className="h-12 brightness-0 invert" />
           </div>
           <p className="text-primary-foreground/60 text-sm leading-relaxed mb-6">
             Expert invoice factoring and accounts receivable management since 1969.
