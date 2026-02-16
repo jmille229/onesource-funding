@@ -4,13 +4,12 @@ import { Menu, X, ChevronDown } from "lucide-react";
 const navItems = [
   {
     label: "Services",
-    children: ["Invoice Factoring", "Freight Factoring", "Credit Services", "Receivables Management"],
+    children: ["Invoice Factoring", "Credit Services", "Receivables Management"],
   },
   {
     label: "Industries",
     children: ["Trucking", "Staffing", "Manufacturing", "Government", "Oil & Gas"],
   },
-  { label: "Freight Factoring", href: "#freight" },
   {
     label: "Resources",
     children: ["Blog", "FAQs", "Factoring Calculator", "Case Studies"],
@@ -29,10 +28,7 @@ const Navbar = () => {
     <nav className="bg-card sticky top-0 z-50 shadow-sm border-b border-border">
       <div className="container-wide flex items-center justify-between px-4 sm:px-6 lg:px-8 py-4">
         <a href="/" className="flex items-center gap-2">
-          <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-            <span className="text-primary-foreground font-bold text-lg">F</span>
-          </div>
-          <span className="font-display text-xl font-bold text-primary">FinanceCo</span>
+          <img src="/logo.svg" alt="One Source Funding" className="h-10" />
         </a>
 
         {/* Desktop Nav */}
@@ -45,7 +41,7 @@ const Navbar = () => {
               onMouseLeave={() => setOpenDropdown(null)}
             >
               <a
-                href={item.href || "#"}
+                href="#"
                 className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-foreground hover:text-accent transition-colors rounded-md"
               >
                 {item.label}
@@ -89,7 +85,7 @@ const Navbar = () => {
             {navItems.map((item) => (
               <div key={item.label}>
                 <a
-                  href={item.href || "#"}
+                  href="#"
                   className="block px-3 py-2.5 text-sm font-medium text-foreground hover:text-accent rounded-md"
                 >
                   {item.label}
