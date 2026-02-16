@@ -22,10 +22,8 @@ const Footer = () => (
         {/* Brand */}
         <div className="lg:col-span-1">
           <div className="flex items-center gap-2 mb-4">
-            <div className="w-10 h-10 bg-accent rounded-lg flex items-center justify-center">
-              <span className="text-accent-foreground font-bold text-lg">F</span>
-            </div>
-            <span className="font-display text-xl font-bold">FinanceCo</span>
+            <img src="/logo.svg" alt="One Source Funding" className="h-10 brightness-0 invert" />
+            <span className="font-display text-xl font-bold">One Source Funding</span>
           </div>
           <p className="text-primary-foreground/60 text-sm leading-relaxed mb-6">
             Expert invoice factoring and accounts receivable management since 1969.
@@ -63,7 +61,7 @@ const Footer = () => (
 
       <div className="border-t border-white/10 mt-12 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
         <p className="text-primary-foreground/50 text-sm">
-          © 2026 FinanceCo. All rights reserved.
+          © 2026 One Source Funding. All rights reserved.
         </p>
         <div className="flex gap-6">
           <a href="#" className="text-primary-foreground/50 text-sm hover:text-accent transition-colors">Privacy Policy</a>

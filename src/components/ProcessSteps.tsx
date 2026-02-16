@@ -2,10 +2,9 @@ import { ClipboardCheck, Handshake, Send, DollarSign } from "lucide-react";
 import { motion } from "framer-motion";
 
 const steps = [
-  { icon: ClipboardCheck, step: "Step 1", title: "Apply", desc: "Complete form & become a client" },
-  { icon: Handshake, step: "Step 2", title: "Service", desc: "You deliver your products or services" },
-  { icon: Send, step: "Step 3", title: "Send", desc: "Send your invoices to us" },
-  { icon: DollarSign, step: "Step 4", title: "Get Paid", desc: "We verify & pay you within 24 hours" },
+  { icon: ClipboardCheck, step: "Step 1", title: "Onboard", desc: "Complete onboarding documents" },
+  { icon: Send, step: "Step 2", title: "Submit", desc: "Once approved, submit invoices and receive funding approval within hours" },
+  { icon: DollarSign, step: "Step 3", title: "Get Paid", desc: "Receive up to 90% of invoice amount deposited directly into your account, often same day" },
 ];
 
 const ProcessSteps = () => (
@@ -14,7 +13,7 @@ const ProcessSteps = () => (
       <div className="text-center mb-16">
         <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground">Our Process</h2>
       </div>
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-8">
+      <div className="grid sm:grid-cols-1 lg:grid-cols-3 gap-8">
         {steps.map((s, i) => (
           <motion.div
             key={s.title}
