@@ -1,4 +1,5 @@
 import { Facebook, Twitter, Linkedin, Instagram, Youtube } from "lucide-react";
+import logoAsset from "@/assets/logo.png.asset.json";
 
 const footerLinks = {
   Company: ["About Us", "Our Team", "Careers", "Contact Us"],
