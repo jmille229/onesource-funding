@@ -1,5 +1,6 @@
 import TopBar from "@/components/TopBar";
 import Navbar from "@/components/Navbar";
+import BrandMasthead from "@/components/BrandMasthead";
 import HeroSection from "@/components/HeroSection";
 import GovernmentBanner from "@/components/GovernmentBanner";
 import InfoCards from "@/components/InfoCards";
@@ -17,6 +18,7 @@ const Index = () => (
   <div className="min-h-screen">
     <TopBar />
     <Navbar />
+    <BrandMasthead />
     <main>
       <HeroSection />
       <GovernmentBanner />
