@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { Shield } from "lucide-react";
 import heroPhone from "@/assets/hero-phone.png";
 
 const HeroSection = () => (
@@ -10,14 +11,18 @@ const HeroSection = () => (
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.7 }}
         >
-          <p className="text-accent font-semibold text-sm uppercase tracking-widest mb-4">
-            Cash Flow & Grow
-          </p>
+          <div className="inline-flex items-center gap-2 bg-accent/15 border border-accent/40 text-accent rounded-full px-4 py-1.5 mb-6">
+            <Shield className="h-4 w-4" />
+            <span className="text-xs font-semibold uppercase tracking-widest">
+              Exclusively for U.S. Government Contractors
+            </span>
+          </div>
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-display font-bold text-primary-foreground leading-tight mb-6">
-            Top Rated Invoice Factoring Since 1969
+            Funding Built for the Government Market
           </h1>
           <p className="text-primary-foreground/80 text-lg md:text-xl mb-8 max-w-lg">
-            Get immediate cash for your outstanding invoices. Fuel your business growth without debt or equity dilution.
+            One Source Funding works exclusively with contractors serving federal, state, and
+            local government agencies. Get paid on your government invoices in hours — not months.
           </p>
           <div className="flex flex-wrap gap-4">
             <a href="#get-started" className="btn-accent text-base px-8 py-4">

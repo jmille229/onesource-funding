@@ -1,12 +1,18 @@
-import { Phone, MapPin, Mail, LogIn } from "lucide-react";
+import { Phone, MapPin, Mail, LogIn, Shield } from "lucide-react";
 
 const TopBar = () => (
   <div className="bg-primary text-primary-foreground text-sm">
     <div className="container-wide flex items-center justify-between px-4 sm:px-6 lg:px-8 py-2">
-      <a href="tel:1-800-555-1234" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
-        <Phone className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">800.555.1234</span>
-      </a>
+      <div className="flex items-center gap-4">
+        <a href="tel:1-800-555-1234" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
+          <Phone className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">800.555.1234</span>
+        </a>
+        <span className="hidden md:flex items-center gap-1.5 text-accent font-semibold uppercase tracking-wider text-xs">
+          <Shield className="h-3.5 w-3.5" />
+          Exclusively Serving the U.S. Government Market
+        </span>
+      </div>
       <div className="flex items-center gap-4 sm:gap-6">
         <a href="#locations" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
           <MapPin className="h-3.5 w-3.5" />

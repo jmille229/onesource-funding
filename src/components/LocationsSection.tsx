@@ -2,14 +2,18 @@ import { motion } from "framer-motion";
 import USCoverageMap from "@/components/USCoverageMap";
 
 const LocationsSection = () => (
-  <section id="locations" className="section-padding">
+  <section id="locations" className="section-padding bg-secondary/30">
     <div className="container-wide">
       <div className="text-center mb-12">
+        <p className="text-accent font-semibold text-sm uppercase tracking-widest mb-3">
+          Nationwide Coverage
+        </p>
         <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground mb-4">
           States We Cover
         </h2>
         <p className="text-muted-foreground leading-relaxed max-w-2xl mx-auto">
-          We proudly serve businesses across 46 states. See our coverage area below.
+          We proudly serve government contractors across 46 states. California, North Dakota,
+          South Dakota, and North Carolina are not currently serviced.
         </p>
       </div>
       <motion.div
@@ -17,19 +21,9 @@ const LocationsSection = () => (
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true }}
         transition={{ duration: 0.6 }}
-        className="max-w-4xl mx-auto"
+        className="max-w-5xl mx-auto"
       >
         <USCoverageMap />
-        <div className="flex items-center justify-center gap-8 mt-6 text-sm">
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded bg-accent" />
-            <span className="text-muted-foreground">Covered</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded bg-muted border border-border" />
-            <span className="text-muted-foreground">Not Covered</span>
-          </div>
-        </div>
       </motion.div>
     </div>
   </section>
