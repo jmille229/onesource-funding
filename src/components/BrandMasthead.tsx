@@ -13,7 +13,7 @@ const BrandMasthead = () => (
         className="flex flex-col items-center"
       >
         {/* Company Name */}
-        <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-display font-bold text-primary tracking-tight leading-[0.95]">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-display font-bold text-primary tracking-tight leading-[1]">
           One Source
           <br />
           <span className="text-gradient">Funding</span>
