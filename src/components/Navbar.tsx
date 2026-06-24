@@ -29,7 +29,7 @@ const Navbar = () => {
     <nav className="bg-card sticky top-0 z-50 shadow-sm border-b border-border">
       <div className="container-wide flex items-center justify-between px-4 sm:px-6 lg:px-8 py-4">
         <a href="/" className="flex items-center gap-2">
-          <img src="/logo.svg" alt="One Source Funding" className="h-12" />
+          <img src={logoAsset.url} alt="One Source Funding" className="h-12" />
         </a>
 
         {/* Desktop Nav */}
