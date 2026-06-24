@@ -22,12 +22,12 @@ const Index = () => (
     <main>
       <HeroSection />
       <GovernmentBanner />
+      <ProcessSteps />
       <InfoCards />
       <GetStartedSection />
       <TestimonialsCarousel />
       <StatsSection />
       <DifferenceSection />
-      <ProcessSteps />
       <LocationsSection />
       <BlogSection />
       <CtaBanner />
