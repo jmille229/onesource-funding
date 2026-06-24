@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Menu, X, ChevronDown } from "lucide-react";
+import logoAsset from "@/assets/logo.png.asset.json";
 
 const navItems = [
   {
