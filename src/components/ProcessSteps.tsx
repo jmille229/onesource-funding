@@ -1,4 +1,4 @@
-import { ClipboardCheck, Handshake, Send, DollarSign } from "lucide-react";
+import { ClipboardCheck, Send, DollarSign } from "lucide-react";
 import { motion } from "framer-motion";
 
 const steps = [
@@ -29,9 +29,6 @@ const ProcessSteps = () => (
             <p className="text-accent font-bold text-sm uppercase tracking-wide mb-1">{s.step}</p>
             <h3 className="text-xl font-display font-bold text-foreground mb-2">{s.title}</h3>
             <p className="text-muted-foreground text-sm">{s.desc}</p>
-            {i < steps.length - 1 && (
-              <div className="hidden lg:block absolute" />
-            )}
           </motion.div>
         ))}
       </div>
