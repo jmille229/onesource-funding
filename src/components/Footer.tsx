@@ -26,7 +26,7 @@ const Footer = () => (
             <img src={logoAsset.url} alt="One Source Funding" className="h-12 brightness-0 invert" />
           </div>
           <p className="text-primary-foreground/60 text-sm leading-relaxed mb-6">
-            Expert invoice factoring and accounts receivable management since 1969.
+            Invoice factoring built exclusively for U.S. government contractors.
           </p>
           <div className="flex gap-3">
             {socialLinks.map((s) => (

@@ -18,8 +18,8 @@ const services = [
   },
   {
     icon: Building2,
-    title: "Industries",
-    description: "We provide working capital and factoring services to businesses in any industry as long as you invoice your customers.",
+    title: "Who We Serve",
+    description: "We work exclusively with contractors serving federal, state, and local government agencies — funding your government receivables.",
   },
 ];
 
@@ -39,6 +39,32 @@ const consultationSchema = z.object({
 
 type ConsultationForm = z.infer<typeof consultationSchema>;
 
+/** Where consultation leads are delivered. */
+const LEAD_EMAIL = "zac@os-funding.com";
+/**
+ * Optional in-page delivery. Set VITE_LEAD_ENDPOINT to a form-to-email service
+ * URL (Formspree, Web3Forms, Basin, or a custom serverless handler) configured
+ * to deliver to LEAD_EMAIL. When set, the form POSTs JSON and never leaves the
+ * page. When unset, we fall back to opening the visitor's email client
+ * addressed to LEAD_EMAIL so the lead is never silently dropped.
+ */
+const LEAD_ENDPOINT = import.meta.env.VITE_LEAD_ENDPOINT as string | undefined;
+
+function buildMailto(values: ConsultationForm): string {
+  const subject = `Consultation request — ${values.firstName} ${values.lastName}`;
+  const body = [
+    `Name: ${values.firstName} ${values.lastName}`,
+    `Email: ${values.email}`,
+    `Phone: ${values.phone}`,
+    values.company ? `Company: ${values.company}` : null,
+    "",
+    values.message ? `Message:\n${values.message}` : null,
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+  return `mailto:${LEAD_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 const inputClass =
   "w-full rounded-lg border border-white/20 bg-white/10 px-4 py-3 text-sm text-dark-section-foreground placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-accent aria-[invalid=true]:border-red-400 aria-[invalid=true]:ring-red-400";
 
@@ -53,18 +79,28 @@ const GetStartedSection = () => {
   });
 
   const onSubmit = async (values: ConsultationForm) => {
-    try {
-      // TODO(onesource): send `values` to the real lead destination.
-      // Options: a serverless function that emails the team (Resend/SendGrid),
-      // a form service (Formspree/Basin), or a CRM/webhook endpoint. Until that
-      // exists, we validate + surface a success state without persisting the lead.
-      console.info("[get-started] consultation request (not yet delivered):", values);
-      await new Promise((resolve) => setTimeout(resolve, 600));
-      toast.success("Thanks! We received your request and will be in touch shortly.");
-      reset();
-    } catch {
-      toast.error("Something went wrong. Please try again or call us directly.");
+    // Preferred path: post to a configured form-to-email service.
+    if (LEAD_ENDPOINT) {
+      try {
+        const res = await fetch(LEAD_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify(values),
+        });
+        if (!res.ok) throw new Error(`Bad response: ${res.status}`);
+        toast.success("Thanks! We received your request and will be in touch shortly.");
+        reset();
+      } catch {
+        toast.error(`Something went wrong. Please email us directly at ${LEAD_EMAIL}.`);
+      }
+      return;
     }
+
+    // Fallback: open the visitor's email client addressed to the team so the
+    // lead is never silently dropped when no endpoint is configured.
+    window.location.href = buildMailto(values);
+    toast.success("Opening your email app to send your request…");
+    reset();
   };
 
   return (

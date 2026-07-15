@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import officeImg from "@/assets/office-building.jpg";
 
 const DifferenceSection = () => (
-  <section className="section-padding">
+  <section id="difference" className="section-padding">
     <div className="container-wide">
       <div className="grid lg:grid-cols-2 gap-12 items-center">
         <motion.div
@@ -28,15 +28,15 @@ const DifferenceSection = () => (
             The Difference
           </p>
           <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground mb-6">
-            A Leader in Business Financing Since 1969
+            Built for Government Contractors
           </h2>
           <p className="text-muted-foreground leading-relaxed mb-4">
-            Nationally recognized as a leader in business financing and a top invoice factoring company. We provide full-service, non-recourse invoice factoring to growing companies across North America.
+            One Source Funding provides non-recourse invoice factoring built specifically for contractors serving federal, state, and local government agencies. We turn your government receivables into working capital — fast.
           </p>
           <p className="text-muted-foreground leading-relaxed mb-8">
-            We maintain offices throughout North America to provide face-to-face service and expert financial solutions to small and medium-sized businesses. Currently serving more than 2,000 clients with an excellent credit rating.
+            We understand government payment cycles and the paperwork that comes with them. Our team works directly with government contractors to fund invoices in hours — not the 30, 60, or 90+ days agencies often take to pay.
           </p>
-          <a href="#about" className="btn-accent">
+          <a href="#get-started" className="btn-accent">
             Find Out More
           </a>
         </motion.div>

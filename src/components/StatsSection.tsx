@@ -1,10 +1,10 @@
 import { useEffect, useState, useRef } from "react";
 
 const stats = [
-  { value: 20000, label: "Customers", suffix: "+", display: "20k" },
-  { value: 4.9, label: "Star Google Rating", suffix: "", display: "4.9" },
-  { value: 55, label: "Years in Business", suffix: "+", display: "55" },
-  { value: 25, label: "Locations", suffix: "+", display: "25" },
+  { label: "Government Contractors Served", suffix: "+", display: "15" },
+  { label: "States Covered", suffix: "", display: "46" },
+  { label: "Funding Turnaround", suffix: "hr", display: "24" },
+  { label: "Government-Focused", suffix: "%", display: "100" },
 ];
 
 const StatsSection = () => {
