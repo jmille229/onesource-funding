@@ -2,6 +2,10 @@ import { useState } from "react";
 import { Menu, X, ChevronDown } from "lucide-react";
 import logoAsset from "@/assets/logo.png.asset.json";
 
+// The customer portal (the invoice/subledger app) deploys separately on its own
+// subdomain. Override per environment with VITE_APP_URL.
+const APP_URL = (import.meta.env.VITE_APP_URL as string | undefined) ?? "https://app.os-funding.com";
+
 const navItems = [
   {
     label: "Services",
@@ -71,9 +75,17 @@ const Navbar = () => {
           ))}
         </div>
 
-        <a href="#get-started" className="hidden lg:inline-flex btn-accent text-sm">
-          Apply Now
-        </a>
+        <div className="hidden lg:flex items-center gap-2">
+          <a
+            href={APP_URL}
+            className="px-4 py-2 text-sm font-medium text-foreground hover:text-accent transition-colors rounded-md"
+          >
+            Log in
+          </a>
+          <a href="#get-started" className="btn-accent text-sm">
+            Apply Now
+          </a>
+        </div>
 
         {/* Mobile toggle */}
         <button
@@ -99,7 +111,13 @@ const Navbar = () => {
                 </a>
               </div>
             ))}
-            <a href="#get-started" className="btn-accent w-full text-center text-sm mt-4">
+            <a
+              href={APP_URL}
+              className="block w-full text-center px-3 py-2.5 text-sm font-medium text-foreground hover:text-accent rounded-md border border-border mt-4"
+            >
+              Log in
+            </a>
+            <a href="#get-started" className="btn-accent w-full text-center text-sm mt-2">
               Apply Now
             </a>
           </div>
