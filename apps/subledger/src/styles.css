@@ -5,7 +5,7 @@ html, body, #root { height: 100%; }
 body { margin: 0; }
 
 .sl { --concrete:#E4E4E0; --surface:#F7F7F4; --ink:#15171A; --graphite:#63666D;
-      --rule:#CBCAC4; --deep:#173F63; --mid:#4A82B8; --hold:#E0A80F; --over:#B23127;
+      --rule:#CBCAC4; --deep:#173F63; --mid:#4A82B8; --faint:#AFC4D8; --hold:#E0A80F; --over:#B23127;
       background:var(--concrete); color:var(--ink); min-height:100%;
       font-family:'IBM Plex Sans','Helvetica Neue',Arial,sans-serif; }
 .sl *, .sl *::before, .sl *::after { box-sizing:border-box; }
@@ -100,6 +100,14 @@ textarea.sl-input { resize:vertical; min-height:74px; line-height:1.5; }
             background:#F6E7E5; margin-bottom:20px; }
 
 .sl-empty { padding:44px 20px; text-align:center; color:var(--graphite); font-size:14px; }
+
+/* ledger */
+.sl-btn-sm { padding:6px 11px; font-size:11px; }
+.sl-ledger { list-style:none; margin:2px 0 0; padding:0; }
+.sl-ledger li { display:flex; justify-content:space-between; gap:14px; align-items:baseline;
+                padding:6px 0; border-bottom:1px dotted var(--rule); font-size:12.5px; line-height:1.5; }
+.sl-led-amt { font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.sl-led-actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
 
 @media (max-width:820px) {
   .sl-rowhead { display:none; }

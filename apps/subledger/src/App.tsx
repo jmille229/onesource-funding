@@ -1,12 +1,15 @@
 import { useMemo, useState } from "react";
-import type { Subcontract } from "./types";
+import type { Bill, Payment, Subcontract } from "./types";
 import { PROJECT, SEED, TRADE } from "./data";
 import { coiState, shortDate, usd } from "./lib/format";
+import { projectTotals, subTotals } from "./lib/money";
 import { useLocalStorage } from "./lib/useLocalStorage";
 import { CommitmentRail } from "./components/CommitmentRail";
 import { SubcontractForm } from "./components/SubcontractForm";
+import { LedgerEntryForm, type LedgerKind } from "./components/LedgerEntryForm";
 
-const STORAGE_KEY = "subledger:subs:v1";
+// v2: the ledger model (bills[] + payments[]) replaced the flat `billed` field.
+const STORAGE_KEY = "subledger:subs:v2";
 
 const flagLabel: Record<string, string> = {
   expired: "COI expired",
@@ -19,29 +22,26 @@ export default function App() {
   const [tab, setTab] = useState<"project" | "subs">("project");
   const [open, setOpen] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
+  const [ledger, setLedger] = useState<{ subId: number; kind: LedgerKind } | null>(null);
 
-  const m = useMemo(() => {
-    const committed = subs.reduce((s, x) => s + x.amount, 0);
-    const billed = subs.reduce((s, x) => s + x.billed, 0);
-    const held = subs.reduce((s, x) => s + x.billed * (x.retainagePct / 100), 0);
-    // Billed to date, net of retainage withheld. NOTE: not the same as cash paid —
-    // an explicit payments ledger is the next iteration; until then this is what the
-    // sub has earned and can collect, not what has actually gone out the door.
-    const netBilled = billed - held;
-    const unbilled = committed - billed;
-    const cv = PROJECT.contractValue;
-    const over = Math.max(0, committed - cv);
-    return {
-      committed, billed, held, netBilled, unbilled, over,
-      headroom: Math.max(0, cv - committed),
-      // segments clipped so the rail never double-counts the overrun
-      segNetBilled: Math.min(netBilled, cv),
-      segHeld: Math.min(held, Math.max(0, cv - netBilled)),
-      segUnbilled: Math.min(unbilled, Math.max(0, cv - netBilled - held)),
-    };
-  }, [subs]);
+  const m = useMemo(() => projectTotals(subs, PROJECT), [subs]);
 
   const coiProblems = subs.filter((s) => coiState(s.coi).key !== "ok");
+
+  const recordEntry = (subId: number, kind: LedgerKind, entry: Bill | Payment) => {
+    setSubs((prev) =>
+      prev.map((s) =>
+        s.id !== subId
+          ? s
+          : kind === "bill"
+            ? { ...s, bills: [...s.bills, entry] }
+            : { ...s, payments: [...s.payments, entry] },
+      ),
+    );
+    setLedger(null);
+  };
+
+  const ledgerSub = ledger ? subs.find((s) => s.id === ledger.subId) : undefined;
 
   return (
     <div className="sl">
@@ -80,15 +80,21 @@ export default function App() {
 
               <CommitmentRail
                 contractValue={PROJECT.contractValue}
-                netBilled={m.segNetBilled} held={m.segHeld} unbilled={m.segUnbilled} over={m.over}
+                paid={m.segPaid} due={m.segDue} held={m.segHeld} unbilled={m.segUnbilled} over={m.over}
               />
 
               <div className="sl-keys">
                 <div className="sl-key">
                   <div className="sl-eyebrow">
-                    <span className="sl-swatch" style={{ background: "var(--deep)" }} />Billed, net of retainage
+                    <span className="sl-swatch" style={{ background: "var(--deep)" }} />Paid out
                   </div>
-                  <div className="sl-keynum">{usd(m.netBilled)}</div>
+                  <div className="sl-keynum">{usd(m.paid)}</div>
+                </div>
+                <div className="sl-key">
+                  <div className="sl-eyebrow">
+                    <span className="sl-swatch" style={{ background: "var(--mid)" }} />Due now
+                  </div>
+                  <div className="sl-keynum">{usd(m.due)}</div>
                 </div>
                 <div className="sl-key">
                   <div className="sl-eyebrow">
@@ -98,7 +104,7 @@ export default function App() {
                 </div>
                 <div className="sl-key">
                   <div className="sl-eyebrow">
-                    <span className="sl-swatch" style={{ background: "var(--mid)" }} />Committed, not billed
+                    <span className="sl-swatch" style={{ background: "var(--faint)" }} />Committed, not billed
                   </div>
                   <div className="sl-keynum">{usd(m.unbilled)}</div>
                 </div>
@@ -116,7 +122,9 @@ export default function App() {
               <p style={{ fontSize: 12.5, color: "var(--graphite)", marginTop: 12, maxWidth: 640, lineHeight: 1.55 }}>
                 {m.over
                   ? "You have committed more to subs than the owner is paying you. Everything past the contract line comes out of your own margin."
-                  : `That ${usd(m.headroom)} still has to cover your own labor, materials, overhead and profit — it is not free money.`}
+                  : m.due > 0
+                    ? `${usd(m.due)} is approved and owed to subs right now — that bill is coming whether or not the owner has paid you yet.`
+                    : `That ${usd(m.headroom)} still has to cover your own labor, materials, overhead and profit — it is not free money.`}
               </p>
             </section>
 
@@ -149,7 +157,7 @@ export default function App() {
                   <div className="sl-eyebrow">Subcontractor</div>
                   <div className="sl-eyebrow" style={{ textAlign: "right" }}>Committed</div>
                   <div className="sl-eyebrow" style={{ textAlign: "right" }}>Billed</div>
-                  <div className="sl-eyebrow" style={{ textAlign: "right" }}>Due</div>
+                  <div className="sl-eyebrow" style={{ textAlign: "right" }}>Paid</div>
                   <div />
                 </div>
 
@@ -162,8 +170,13 @@ export default function App() {
                 {subs.map((s) => {
                   const t = TRADE[s.trade] || TRADE.concrete;
                   const c = coiState(s.coi);
+                  const tot = subTotals(s);
                   const isOpen = open === s.id;
-                  const pctBilled = s.amount ? Math.min(100, (s.billed / s.amount) * 100) : 0;
+                  const pctBilled = s.amount ? Math.min(100, (tot.billed / s.amount) * 100) : 0;
+                  const entries = [
+                    ...s.bills.map((b) => ({ ...b, kind: "bill" as const })),
+                    ...s.payments.map((p) => ({ ...p, kind: "payment" as const })),
+                  ].sort((a, b) => a.date.localeCompare(b.date));
                   return (
                     <div key={s.id}>
                       <button className="sl-row" onClick={() => setOpen(isOpen ? null : s.id)}
@@ -181,6 +194,11 @@ export default function App() {
                                 {flagLabel[c.key]}
                               </span>
                             )}
+                            {tot.due > 0 && (
+                              <span className="sl-flag" style={{ color: "var(--mid)", borderColor: "var(--mid)" }}>
+                                {usd(tot.due)} due
+                              </span>
+                            )}
                             {s.cert !== "—" && (
                               <span className="sl-flag" style={{ color: "#2E7D5B", borderColor: "#2E7D5B" }}>
                                 {s.cert}
@@ -190,10 +208,8 @@ export default function App() {
                           <div className="sl-mini"><div className="sl-minifill" style={{ width: `${pctBilled}%` }} /></div>
                         </div>
                         <div className="sl-num sl-hidesm">{usd(s.amount)}</div>
-                        <div className="sl-num sl-hidesm" style={{ color: "var(--graphite)" }}>{usd(s.billed)}</div>
-                        <div className="sl-num sl-hidesm" style={{ fontSize: 12, color: "var(--graphite)" }}>
-                          {shortDate(s.finish)}
-                        </div>
+                        <div className="sl-num sl-hidesm" style={{ color: "var(--graphite)" }}>{usd(tot.billed)}</div>
+                        <div className="sl-num sl-hidesm">{usd(tot.paid)}</div>
                         <div className="sl-mono" style={{ textAlign: "center", color: "var(--graphite)" }}>
                           {isOpen ? "−" : "+"}
                         </div>
@@ -209,9 +225,11 @@ export default function App() {
                             <dt>Money</dt>
                             <dd className="sl-mono" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
                               Committed {usd(s.amount)}<br />
-                              Billed to date {usd(s.billed)}<br />
-                              Retainage held {usd(s.billed * (s.retainagePct / 100))} ({s.retainagePct}%)<br />
-                              Remaining {usd(s.amount - s.billed)}
+                              Billed to date {usd(tot.billed)}<br />
+                              Retainage held {usd(tot.held)} ({s.retainagePct}%)<br />
+                              Paid {usd(tot.paid)}<br />
+                              <span style={{ color: tot.due > 0 ? "var(--deep)" : undefined }}>Due now {usd(tot.due)}</span><br />
+                              Not yet billed {usd(tot.remaining)}
                             </dd>
                           </dl>
                           <dl className="sl-dl" style={{ margin: 0 }}>
@@ -229,6 +247,44 @@ export default function App() {
                             </dd>
                             <dt style={{ marginTop: 14 }}>Contact</dt>
                             <dd>{s.contact}</dd>
+                          </dl>
+
+                          <dl className="sl-dl" style={{ gridColumn: "1 / -1", margin: 0 }}>
+                            <dt>Ledger</dt>
+                            <dd>
+                              {entries.length === 0 ? (
+                                <div style={{ color: "var(--graphite)" }}>No bills or payments recorded yet.</div>
+                              ) : (
+                                <ul className="sl-ledger">
+                                  {entries.map((e) => {
+                                    const isPay = e.kind === "payment";
+                                    const col = isPay ? "#2E7D5B" : "var(--mid)";
+                                    return (
+                                      <li key={`${e.kind}-${e.id}`}>
+                                        <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                          <span className="sl-flag" style={{ color: col, borderColor: col }}>
+                                            {isPay ? "Payment" : "Bill"}
+                                          </span>
+                                          <span>{shortDate(e.date)}</span>
+                                          {e.note && <span style={{ color: "var(--graphite)" }}>· {e.note}</span>}
+                                        </span>
+                                        <span className="sl-led-amt" style={{ color: isPay ? "#2E7D5B" : undefined }}>
+                                          {isPay ? "−" : ""}{usd(e.amount)}
+                                        </span>
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              )}
+                              <div className="sl-led-actions">
+                                <button className="sl-btn sl-btn-sm" onClick={() => setLedger({ subId: s.id, kind: "bill" })}>
+                                  Record bill
+                                </button>
+                                <button className="sl-btn sl-btn-sm" data-ghost="1" onClick={() => setLedger({ subId: s.id, kind: "payment" })}>
+                                  Record payment
+                                </button>
+                              </div>
+                            </dd>
                           </dl>
                         </div>
                       )}
@@ -299,6 +355,16 @@ export default function App() {
           headroom={m.headroom}
           onCancel={() => setAdding(false)}
           onSave={(rec) => { setSubs([...subs, rec]); setAdding(false); setOpen(rec.id); }}
+        />
+      )}
+
+      {ledger && ledgerSub && (
+        <LedgerEntryForm
+          kind={ledger.kind}
+          firm={ledgerSub.firm}
+          retainagePct={ledgerSub.retainagePct}
+          onCancel={() => setLedger(null)}
+          onSave={(entry) => recordEntry(ledger.subId, ledger.kind, entry)}
         />
       )}
     </div>

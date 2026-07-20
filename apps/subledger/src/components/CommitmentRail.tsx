@@ -3,15 +3,20 @@ import { usd } from "../lib/format";
 
 interface Props {
   contractValue: number;
-  /** Billed to date, net of retainage withheld. */
-  netBilled: number;
+  /** Cash actually paid. */
+  paid: number;
+  /** Approved and owed, net of retainage, not yet paid. */
+  due: number;
+  /** Retainage withheld. */
   held: number;
+  /** Committed but not yet billed. */
   unbilled: number;
+  /** Committed beyond the contract value. */
   over: number;
 }
 
-export function CommitmentRail({ contractValue, netBilled, held, unbilled, over }: Props) {
-  const scaleMax = Math.max(contractValue, netBilled + held + unbilled + over);
+export function CommitmentRail({ contractValue, paid, due, held, unbilled, over }: Props) {
+  const scaleMax = Math.max(contractValue, paid + due + held + unbilled + over);
   const pct = (v: number) => `${(v / scaleMax) * 100}%`;
 
   const step = 50000;
@@ -22,9 +27,10 @@ export function CommitmentRail({ contractValue, netBilled, held, unbilled, over 
     <div style={{ marginTop: 26 }}>
       <div style={{ position: "relative" }}>
         <div className="sl-rail">
-          <div className="sl-seg" style={{ width: pct(netBilled), background: "var(--deep)" }} />
+          <div className="sl-seg" style={{ width: pct(paid), background: "var(--deep)" }} />
+          <div className="sl-seg" style={{ width: pct(due), background: "var(--mid)" }} />
           <div className="sl-seg" style={{ width: pct(held), background: "var(--hold)" }} />
-          <div className="sl-seg" style={{ width: pct(unbilled), background: "var(--mid)" }} />
+          <div className="sl-seg" style={{ width: pct(unbilled), background: "var(--faint)" }} />
           {over > 0 && <div className="sl-seg sl-hazard" style={{ width: pct(over) }} />}
         </div>
 
