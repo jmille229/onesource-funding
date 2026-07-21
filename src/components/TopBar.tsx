@@ -18,7 +18,7 @@ const TopBar = () => (
           <MapPin className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Locations</span>
         </a>
-        <a href="#contact" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
+        <a href="#get-started" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
           <Mail className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Contact Us</span>
         </a>

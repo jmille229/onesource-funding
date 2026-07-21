@@ -68,7 +68,7 @@ const TestimonialsCarousel = () => {
                 <Star key={i} className="h-5 w-5 fill-accent text-accent" />
               ))}
             </div>
-            <span className="text-muted-foreground text-sm ml-2">Based on 800+ reviews</span>
+            <span className="text-muted-foreground text-sm ml-2">From the contractors we serve</span>
           </div>
         </div>
 

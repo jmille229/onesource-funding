@@ -28,7 +28,7 @@ const HeroSection = () => (
             <a href="#get-started" className="btn-accent text-base px-8 py-4">
               Get Started
             </a>
-            <a href="#learn" className="btn-outline-light text-base px-8 py-4">
+            <a href="#difference" className="btn-outline-light text-base px-8 py-4">
               Learn More
             </a>
           </div>

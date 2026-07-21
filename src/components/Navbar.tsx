@@ -2,6 +2,10 @@ import { useState } from "react";
 import { Menu, X, ChevronDown } from "lucide-react";
 import logoAsset from "@/assets/logo.png.asset.json";
 
+// The customer portal (the invoice/subledger app) deploys separately on its own
+// subdomain. Override per environment with VITE_APP_URL.
+const APP_URL = (import.meta.env.VITE_APP_URL as string | undefined) ?? "https://app.os-funding.com";
+
 const navItems = [
   {
     label: "Services",
@@ -40,14 +44,20 @@ const Navbar = () => {
               className="relative group"
               onMouseEnter={() => item.children && setOpenDropdown(item.label)}
               onMouseLeave={() => setOpenDropdown(null)}
+              onFocus={() => item.children && setOpenDropdown(item.label)}
+              onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpenDropdown(null);
+              }}
             >
-              <a
-                href="#"
+              <button
+                type="button"
+                aria-haspopup={item.children ? "true" : undefined}
+                aria-expanded={item.children ? openDropdown === item.label : undefined}
                 className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-foreground hover:text-accent transition-colors rounded-md"
               >
                 {item.label}
                 {item.children && <ChevronDown className="h-3.5 w-3.5" />}
-              </a>
+              </button>
               {item.children && openDropdown === item.label && (
                 <div className="absolute top-full left-0 bg-card rounded-lg shadow-xl border border-border py-2 min-w-[200px] animate-fade-in">
                   {item.children.map((child) => (
@@ -65,9 +75,17 @@ const Navbar = () => {
           ))}
         </div>
 
-        <a href="#apply" className="hidden lg:inline-flex btn-accent text-sm">
-          Apply Now
-        </a>
+        <div className="hidden lg:flex items-center gap-2">
+          <a
+            href={APP_URL}
+            className="px-4 py-2 text-sm font-medium text-foreground hover:text-accent transition-colors rounded-md"
+          >
+            Log in
+          </a>
+          <a href="#get-started" className="btn-accent text-sm">
+            Apply Now
+          </a>
+        </div>
 
         {/* Mobile toggle */}
         <button
@@ -93,7 +111,13 @@ const Navbar = () => {
                 </a>
               </div>
             ))}
-            <a href="#apply" className="btn-accent w-full text-center text-sm mt-4">
+            <a
+              href={APP_URL}
+              className="block w-full text-center px-3 py-2.5 text-sm font-medium text-foreground hover:text-accent rounded-md border border-border mt-4"
+            >
+              Log in
+            </a>
+            <a href="#get-started" className="btn-accent w-full text-center text-sm mt-2">
               Apply Now
             </a>
           </div>
