@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "onesource-subledger",
+  "compatibility_date": "2025-01-01",
+  // Static SPA (the Subledger app). Serve the Vite build output as assets and
+  // fall back to index.html so client-side navigation works. Assets-only upload,
+  // so `wrangler deploy` does not require the Vite plugin (Vite 6+).
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}
