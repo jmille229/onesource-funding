@@ -22,7 +22,7 @@ const Footer = () => (
         {/* Brand */}
         <div className="lg:col-span-1">
           <div className="flex items-center gap-2 mb-4">
-            <img src="/logo.svg" alt="One Source Funding" className="h-12 brightness-0 invert" />
+            <img src="/logo.png" alt="One Source Funding" className="h-12 brightness-0 invert" />
           </div>
           <p className="text-primary-foreground/60 text-sm leading-relaxed mb-6">
             Invoice factoring built exclusively for U.S. government contractors.
