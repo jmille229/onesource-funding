@@ -40,3 +40,6 @@ coverage/
 postgres_data/
 redis_data/
 minio_data/
+
+# TypeScript build info
+*.tsbuildinfo

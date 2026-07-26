@@ -203,7 +203,7 @@ export function TasksPage() {
                   <p className={`text-sm font-medium ${status === 'completed' ? 'line-through text-slate-400' : 'text-slate-900'}`}>
                     {task['name'] as string}
                   </p>
-                  {(task['start_date'] || task['end_date']) && (
+                  {Boolean(task['start_date'] || task['end_date']) && (
                     <p className="text-xs text-slate-400 mt-0.5">
                       {task['start_date'] ? formatDate(task['start_date'] as string) : ''}
                       {task['start_date'] && task['end_date'] ? ' → ' : ''}
@@ -212,8 +212,8 @@ export function TasksPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  {task['completion_pct'] && Number(task['completion_pct']) > 0 && (
-                    <span className="text-xs text-slate-500">{task['completion_pct']}%</span>
+                  {Number(task['completion_pct']) > 0 && (
+                    <span className="text-xs text-slate-500">{String(task['completion_pct'])}%</span>
                   )}
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                     status === 'completed' ? 'bg-green-100 text-green-700' :

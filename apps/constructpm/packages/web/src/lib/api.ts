@@ -62,9 +62,16 @@ api.interceptors.response.use(
 );
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
-export function formatCurrency(n: number | string | null | undefined): string {
+export function formatCurrency(
+  n: number | string | null | undefined,
+  opts?: { short?: boolean }
+): string {
   const num = typeof n === 'string' ? parseFloat(n) : (n ?? 0);
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    ...(opts?.short ? { notation: 'compact', maximumFractionDigits: 1 } : {}),
+  }).format(num);
 }
 
 export function formatDate(d: string | null | undefined): string {

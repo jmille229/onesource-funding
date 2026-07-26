@@ -173,17 +173,17 @@ export function ContactsPage() {
                 <span className={TYPE_COLORS[c['type'] as string] ?? 'badge-gray'}>{c['type'] as string}</span>
               </div>
               <p className="font-semibold text-slate-900 text-sm truncate">{c['name'] as string}</p>
-              {c['email'] && (
+              {Boolean(c['email']) && (
                 <p className="text-xs text-slate-500 flex items-center gap-1 mt-1 truncate">
                   <Mail className="w-3 h-3 flex-shrink-0" />{c['email'] as string}
                 </p>
               )}
-              {c['phone'] && (
+              {Boolean(c['phone']) && (
                 <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
                   <Phone className="w-3 h-3 flex-shrink-0" />{c['phone'] as string}
                 </p>
               )}
-              {(c['city'] || c['state_code']) && (
+              {Boolean(c['city'] || c['state_code']) && (
                 <p className="text-xs text-slate-400 mt-1">{[c['city'], c['state_code']].filter(Boolean).join(', ')}</p>
               )}
             </button>

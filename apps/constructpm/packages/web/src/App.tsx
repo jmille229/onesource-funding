@@ -3,17 +3,18 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import { useAuthStore } from './stores/auth.store';
-import AppLayout from './components/layout/AppLayout';
-import LoginPage from './pages/auth/LoginPage';
-import DashboardPage from './pages/DashboardPage';
-import JobsPage from './pages/jobs/JobsPage';
-import JobDetailPage from './pages/jobs/JobDetailPage';
-import JobNewPage from './pages/jobs/JobNewPage';
-import BudgetPage from './pages/budget/BudgetPage';
-import TasksPage from './pages/tasks/TasksPage';
-import InvoicesPage from './pages/invoices/InvoicesPage';
-import ContactsPage from './pages/contacts/ContactsPage';
-import ReportsPage from './pages/reports/ReportsPage';
+import { AppLayout } from './components/layout/AppLayout';
+import { LoginPage } from './pages/auth/LoginPage';
+import { DashboardPage } from './pages/DashboardPage';
+import { JobsPage } from './pages/jobs/JobsPage';
+import { JobDetailPage } from './pages/jobs/JobDetailPage';
+import { JobNewPage } from './pages/jobs/JobNewPage';
+import { BudgetPage } from './pages/budget/BudgetPage';
+import { SubcontractsPage } from './pages/subcontracts/SubcontractsPage';
+import { TasksPage } from './pages/tasks/TasksPage';
+import { InvoicesPage } from './pages/invoices/InvoicesPage';
+import { ContactsPage } from './pages/contacts/ContactsPage';
+import { ReportsPage } from './pages/reports/ReportsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -66,6 +67,7 @@ export default function App() {
             <Route path="jobs/:id" element={<JobDetailPage />} />
             <Route path="jobs/:id/budget" element={<BudgetPage />} />
             <Route path="jobs/:id/tasks" element={<TasksPage />} />
+            <Route path="jobs/:id/subcontracts" element={<SubcontractsPage />} />
             <Route path="invoices" element={<InvoicesPage />} />
             <Route path="contacts" element={<ContactsPage />} />
             <Route path="reports" element={<ReportsPage />} />

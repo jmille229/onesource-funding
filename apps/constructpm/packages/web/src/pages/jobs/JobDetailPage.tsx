@@ -2,7 +2,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft, Calendar, DollarSign, MapPin, User, ClipboardList,
-  BarChart3, FileText, Clock, Building2, ExternalLink
+  BarChart3, FileText, Clock, Building2, ExternalLink, HardHat
 } from 'lucide-react';
 import { api, formatCurrency, formatDate, formatPct } from '../../lib/api';
 
@@ -112,6 +112,9 @@ export function JobDetailPage() {
           </Link>
           <Link to={`/jobs/${id}/budget`} className="btn-secondary btn-sm">
             <BarChart3 className="w-4 h-4" /> Budget
+          </Link>
+          <Link to={`/jobs/${id}/subcontracts`} className="btn-secondary btn-sm">
+            <HardHat className="w-4 h-4" /> Subs
           </Link>
         </div>
       </div>
