@@ -5,7 +5,7 @@ import pinoHttp from 'pino-http';
 import { z } from 'zod';
 import { RateLimiterRedis, RateLimiterMemory } from 'rate-limiter-flexible';
 import { verifyAccessToken } from '../lib/jwt.js';
-import { redisClient } from '../lib/redis.js';
+import { redis } from '../lib/redis.js';
 import type { AuthContext, UserRole } from '@constructpm/shared';
 
 // ─── Logger ──────────────────────────────────────────────────────────────────
@@ -91,9 +91,9 @@ export function requireRole(...roles: UserRole[]) {
 
 // ─── Rate limiters — Redis-backed in production, memory fallback in dev ───────
 function makeRateLimiter(opts: { points: number; duration: number; keyPrefix: string }) {
-  if (redisClient.status === 'ready') {
+  if (redis.status === 'ready') {
     return new RateLimiterRedis({
-      storeClient: redisClient,
+      storeClient: redis,
       keyPrefix: opts.keyPrefix,
       points: opts.points,
       duration: opts.duration,

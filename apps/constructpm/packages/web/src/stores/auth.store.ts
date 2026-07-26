@@ -23,7 +23,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   loading: true,
 
   login: async (email, password) => {
-    const res = await api.post('/api/auth/login', { email, password });
+    const res = await api.post('/auth/login', { email, password });
     const { access_token, user } = res.data.data;
     // SECURITY: Token stored in memory only — not localStorage
     setAccessToken(access_token);
@@ -32,7 +32,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   logout: async () => {
     try {
-      await api.post('/api/auth/logout');
+      await api.post('/auth/logout');
     } finally {
       setAccessToken(null);
       set({ user: null });
@@ -44,10 +44,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     // then load user profile. If refresh fails, user stays logged out.
     set({ loading: true });
     try {
-      const refreshRes = await api.post('/api/auth/refresh', {}, { withCredentials: true });
+      const refreshRes = await api.post('/auth/refresh', {}, { withCredentials: true });
       const token: string = refreshRes.data.data.access_token;
       setAccessToken(token);
-      const userRes = await api.get('/api/auth/me');
+      const userRes = await api.get('/auth/me');
       set({ user: userRes.data.data, loading: false });
     } catch {
       setAccessToken(null);

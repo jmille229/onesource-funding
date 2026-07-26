@@ -9,7 +9,10 @@ export function setAccessToken(token: string | null) { _accessToken = token; }
 export function getAccessToken(): string | null { return _accessToken; }
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? '',
+  // Every page calls bare paths ('/jobs', '/subcontracts', ...), so the API prefix
+  // belongs in the baseURL. Default to '/api' (the Vite dev proxy and prod both
+  // serve the API under /api); override with VITE_API_URL for a split-origin API.
+  baseURL: import.meta.env.VITE_API_URL ?? '/api',
   withCredentials: true,   // Sends the httpOnly refresh_token cookie automatically
   timeout: 30_000,
 });
