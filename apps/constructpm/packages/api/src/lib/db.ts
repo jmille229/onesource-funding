@@ -35,15 +35,30 @@ function assertValidCompanyId(companyId: string): void {
   }
 }
 
-/** RLS-enforced single-query client — uses parameterized set_config, never string interpolation */
+/**
+ * RLS-enforced single-query client.
+ *
+ * set_config(..., is_local => true) only lasts for the current transaction, so
+ * the tenant setting and the query MUST run in the same transaction. Running
+ * them as separate autocommit statements (the previous behaviour) discarded the
+ * setting before the query ran, so RLS saw a NULL tenant and returned zero rows.
+ * Wrap both in an explicit transaction. Parameterized set_config — never string
+ * interpolation.
+ */
 export function createRlsClient(pool: pg.Pool, companyId: string) {
   assertValidCompanyId(companyId);
   return {
     async query<T = Record<string, unknown>>(sql: string, params?: unknown[]) {
       const client = await pool.connect();
       try {
+        await client.query('BEGIN');
         await client.query('SELECT set_config($1, $2, true)', ['app.company_id', companyId]);
-        return await client.query<T>(sql, params);
+        const result = await client.query<T>(sql, params);
+        await client.query('COMMIT');
+        return result;
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
       } finally {
         client.release();
       }

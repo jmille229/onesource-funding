@@ -1,148 +1,104 @@
 -- ============================================================
--- V002: Row Level Security Policies
--- Defense-in-depth: enforces tenant isolation at the DB layer
--- in addition to the application-layer SET LOCAL app.company_id.
--- Even a raw DB connection or a buggy query cannot read another
--- company's data without the correct config setting.
+-- V002: Row-Level Security, tenant isolation, and the app role.
+--
+-- Run this migration as a role with CREATEROLE + BYPASSRLS (the trusted
+-- migration/admin role — e.g. the DB owner altered with BYPASSRLS, or a
+-- superuser). The SECURITY DEFINER auth functions below inherit that role's
+-- RLS-bypass, which is what lets the unauthenticated login/refresh flow look
+-- users up across tenants.
+--
+-- The application connects as `constructpm_app` (created here), which is NOT
+-- a superuser and does NOT have BYPASSRLS — so every query it runs is forced
+-- through the policies below. This is the actual tenant boundary.
 -- ============================================================
 
--- ─── Helper: current tenant from session config ──────────────
--- Returns NULL if not set (blocks all access via USING clause)
+-- ─── Current tenant from the per-transaction session config ──────────────────
+-- NULL when unset → every USING clause is false → access denied (fail closed).
 CREATE OR REPLACE FUNCTION current_company_id() RETURNS uuid
   LANGUAGE sql STABLE AS
-$$
-  SELECT NULLIF(current_setting('app.company_id', true), '')::uuid;
-$$;
+$$ SELECT NULLIF(current_setting('app.company_id', true), '')::uuid; $$;
 
--- ─── Enable RLS on all tenant-scoped tables ───────────────────
-ALTER TABLE companies           ENABLE ROW LEVEL SECURITY;
-ALTER TABLE users               ENABLE ROW LEVEL SECURITY;
-ALTER TABLE jobs                ENABLE ROW LEVEL SECURITY;
-ALTER TABLE contacts            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tasks               ENABLE ROW LEVEL SECURITY;
-ALTER TABLE task_groups         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE task_assignees      ENABLE ROW LEVEL SECURITY;
-ALTER TABLE budget_items        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE change_orders       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE purchase_orders     ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vendor_bills        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE invoices            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE invoice_line_items  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE daily_logs          ENABLE ROW LEVEL SECURITY;
-ALTER TABLE time_entries        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE file_attachments    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE refresh_tokens      ENABLE ROW LEVEL SECURITY;
-
--- ─── RLS bypasses for superuser / migration role ──────────────
--- The migration user (constructpm) uses BYPASSRLS so migrations
--- and the seed script can write data without needing the config.
--- The application connects as constructpm_app (created below),
--- which does NOT have BYPASSRLS.
-DO $$
-BEGIN
+-- ─── Application role (subject to RLS) ───────────────────────────────────────
+DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'constructpm_app') THEN
     CREATE ROLE constructpm_app LOGIN PASSWORD 'CHANGE_THIS_IN_PRODUCTION';
   END IF;
-END;
-$$;
-
-GRANT CONNECT ON DATABASE constructpm_dev TO constructpm_app;
+END $$;
 GRANT USAGE ON SCHEMA public TO constructpm_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO constructpm_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO constructpm_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO constructpm_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO constructpm_app;
 
--- ─── companies: can only see own company ─────────────────────
-CREATE POLICY companies_isolation ON companies
-  FOR ALL TO constructpm_app
-  USING (id = current_company_id());
+-- ─── Enable + FORCE RLS on every tenant-scoped table ─────────────────────────
+-- FORCE also subjects the table owner to RLS (defense-in-depth against an
+-- accidental owner-role connection). The migration role bypasses via BYPASSRLS.
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'companies','users','contacts','jobs','budgets','budget_groups','budget_items',
+    'budget_item_depletion_summary','task_groups','tasks','task_assignees','change_orders',
+    'purchase_orders','po_items','vendor_bills','vendor_bill_items','invoices','invoice_items',
+    'daily_logs','time_entries','file_attachments','refresh_tokens'
+  ] LOOP
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', t);
+    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY;', t);
+  END LOOP;
+END $$;
 
--- ─── users ───────────────────────────────────────────────────
-CREATE POLICY users_isolation ON users
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
+-- ─── Isolation policies ──────────────────────────────────────────────────────
+-- companies keys on id; everything else keys on its own company_id column.
+DROP POLICY IF EXISTS companies_isolation ON companies;
+CREATE POLICY companies_isolation ON companies FOR ALL TO constructpm_app
+  USING (id = current_company_id()) WITH CHECK (id = current_company_id());
 
--- ─── jobs ────────────────────────────────────────────────────
-CREATE POLICY jobs_isolation ON jobs
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'users','contacts','jobs','budgets','budget_groups','budget_items',
+    'budget_item_depletion_summary','task_groups','tasks','change_orders',
+    'purchase_orders','po_items','vendor_bills','vendor_bill_items','invoices',
+    'invoice_items','daily_logs','time_entries','file_attachments','refresh_tokens'
+  ] LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I;', t||'_isolation', t);
+    EXECUTE format(
+      'CREATE POLICY %I ON %I FOR ALL TO constructpm_app '
+      'USING (company_id = current_company_id()) '
+      'WITH CHECK (company_id = current_company_id());', t||'_isolation', t);
+  END LOOP;
+END $$;
 
--- ─── contacts ────────────────────────────────────────────────
-CREATE POLICY contacts_isolation ON contacts
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
+-- task_assignees has no company_id → isolate through its parent task.
+DROP POLICY IF EXISTS task_assignees_isolation ON task_assignees;
+CREATE POLICY task_assignees_isolation ON task_assignees FOR ALL TO constructpm_app
+  USING (EXISTS (SELECT 1 FROM tasks tk WHERE tk.id = task_assignees.task_id AND tk.company_id = current_company_id()))
+  WITH CHECK (EXISTS (SELECT 1 FROM tasks tk WHERE tk.id = task_assignees.task_id AND tk.company_id = current_company_id()));
 
--- ─── tasks ───────────────────────────────────────────────────
-CREATE POLICY tasks_isolation ON tasks
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
+-- ─── Cross-tenant auth lookups (SECURITY DEFINER) ────────────────────────────
+-- Login and refresh run before any tenant context exists, so they must read
+-- across tenants. These functions are owned by the (BYPASSRLS) migration role
+-- and are the ONLY cross-tenant read path granted to the app role.
+CREATE OR REPLACE FUNCTION auth_find_user_by_email(p_email text)
+RETURNS TABLE(id uuid, company_id uuid, email text, first_name text, last_name text, role user_role, password_hash text)
+LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  SELECT u.id, u.company_id, u.email, u.first_name, u.last_name, u.role, u.password_hash
+  FROM users u
+  WHERE lower(u.email) = lower(p_email) AND u.is_active = true AND u.deleted_at IS NULL
+  LIMIT 1;
+$$;
 
-CREATE POLICY task_groups_isolation ON task_groups
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
+CREATE OR REPLACE FUNCTION auth_find_refresh_token(p_hash text)
+RETURNS TABLE(id uuid, company_id uuid, user_id uuid, family_id uuid, is_revoked boolean, replaced_by uuid, absolute_expiry timestamptz, role user_role)
+LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  SELECT rt.id, rt.company_id, rt.user_id, rt.family_id, rt.is_revoked, rt.replaced_by, rt.absolute_expiry, u.role
+  FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id
+  WHERE rt.token_hash = p_hash
+  LIMIT 1;
+$$;
 
-CREATE POLICY task_assignees_isolation ON task_assignees
-  FOR ALL TO constructpm_app
-  USING (
-    EXISTS (
-      SELECT 1 FROM tasks t
-      WHERE t.id = task_assignees.task_id
-        AND t.company_id = current_company_id()
-    )
-  );
-
--- ─── budget ──────────────────────────────────────────────────
-CREATE POLICY budget_items_isolation ON budget_items
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
-
--- ─── change orders ───────────────────────────────────────────
-CREATE POLICY change_orders_isolation ON change_orders
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
-
--- ─── purchase orders ─────────────────────────────────────────
-CREATE POLICY purchase_orders_isolation ON purchase_orders
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
-
--- ─── vendor bills ────────────────────────────────────────────
-CREATE POLICY vendor_bills_isolation ON vendor_bills
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
-
--- ─── invoices ────────────────────────────────────────────────
-CREATE POLICY invoices_isolation ON invoices
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
-
-CREATE POLICY invoice_line_items_isolation ON invoice_line_items
-  FOR ALL TO constructpm_app
-  USING (
-    EXISTS (
-      SELECT 1 FROM invoices i
-      WHERE i.id = invoice_line_items.invoice_id
-        AND i.company_id = current_company_id()
-    )
-  );
-
--- ─── daily logs ──────────────────────────────────────────────
-CREATE POLICY daily_logs_isolation ON daily_logs
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
-
--- ─── time entries ────────────────────────────────────────────
-CREATE POLICY time_entries_isolation ON time_entries
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
-
--- ─── file attachments ────────────────────────────────────────
-CREATE POLICY file_attachments_isolation ON file_attachments
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
-
--- ─── refresh tokens ──────────────────────────────────────────
-CREATE POLICY refresh_tokens_isolation ON refresh_tokens
-  FOR ALL TO constructpm_app
-  USING (company_id = current_company_id());
+REVOKE ALL ON FUNCTION auth_find_user_by_email(text)  FROM PUBLIC;
+REVOKE ALL ON FUNCTION auth_find_refresh_token(text)  FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION auth_find_user_by_email(text)  TO constructpm_app;
+GRANT EXECUTE ON FUNCTION auth_find_refresh_token(text)  TO constructpm_app;
