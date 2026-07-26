@@ -9,8 +9,11 @@ dotenv.config({ path: '../../.env.local' });
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'migrations');
 
+// Migrations create roles, SECURITY DEFINER functions, and FORCE RLS — they must
+// run as the admin role (owner + BYPASSRLS + CREATEROLE), NOT the RLS-scoped app
+// role. Prefer MIGRATION_DATABASE_URL; fall back to DATABASE_URL for older setups.
 const pool = new pg.Pool({
-  connectionString: process.env['DATABASE_URL'] ??
+  connectionString: process.env['MIGRATION_DATABASE_URL'] ?? process.env['DATABASE_URL'] ??
     'postgresql://constructpm:constructpm_dev@localhost:5432/constructpm_dev',
 });
 

@@ -4,8 +4,11 @@ import dotenv from 'dotenv';
 
 dotenv.config({ path: '../../.env.local' });
 
+// Seed writes across tenants, so it runs as the admin (BYPASSRLS) role, same as
+// migrations — not the RLS-scoped app role.
 const pool = new pg.Pool({
   connectionString:
+    process.env['MIGRATION_DATABASE_URL'] ??
     process.env['DATABASE_URL'] ??
     'postgresql://constructpm:constructpm_dev@localhost:5432/constructpm_dev',
 });

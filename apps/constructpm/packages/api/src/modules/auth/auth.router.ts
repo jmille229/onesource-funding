@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import argon2 from 'argon2';
 import { randomUUID, createHash } from 'crypto';
-import { writePool, readPool } from '../../lib/db.js';
+import { readPool, writePool, withTransaction, createRlsClient } from '../../lib/db.js';
 import { signAccessToken } from '../../lib/jwt.js';
 import { asyncHandler, authRateLimit, authenticate, validate, logger } from '../../middleware/index.js';
 
@@ -31,14 +31,10 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     const { email, password } = req.body as { email: string; password: string };
 
-    const userRes = await readPool.query(
-      `SELECT u.id, u.company_id, u.email, u.first_name, u.last_name, u.role,
-              u.password_hash, u.is_active, u.deleted_at
-       FROM users u
-       WHERE LOWER(u.email) = LOWER($1) AND u.is_active = true AND u.deleted_at IS NULL
-       LIMIT 1`,
-      [email]
-    );
+    // Login has no tenant context yet, so it must look the user up across all
+    // tenants. auth_find_user_by_email is a SECURITY DEFINER function — the only
+    // cross-tenant read path granted to the RLS-scoped app role.
+    const userRes = await readPool.query(`SELECT * FROM auth_find_user_by_email($1)`, [email]);
     const user = userRes.rows[0] as
       | (Record<string, unknown> & { password_hash: string })
       | undefined;
@@ -74,12 +70,15 @@ authRouter.post(
     const familyId = randomUUID();
     const expiry = new Date(Date.now() + 90 * 86400 * 1000);
 
-    await writePool.query(
-      `INSERT INTO refresh_tokens (company_id, user_id, token_hash, family_id, absolute_expiry)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [user['company_id'], user['id'], tokenHash, familyId, expiry]
-    );
-    await writePool.query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user['id']]);
+    // Writes are scoped to the user's own company so the RLS WITH CHECK passes.
+    await withTransaction(String(user['company_id']), async (client) => {
+      await client.query(
+        `INSERT INTO refresh_tokens (company_id, user_id, token_hash, family_id, absolute_expiry)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [user['company_id'], user['id'], tokenHash, familyId, expiry]
+      );
+      await client.query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user['id']]);
+    });
 
     logger.info({ user_id: user['id'] }, 'Login successful');
     res.cookie('refresh_token', rawRefresh, COOKIE_OPTS);
@@ -112,12 +111,8 @@ authRouter.post(
     }
 
     const hash = createHash('sha256').update(raw).digest('hex');
-    const tokenRes = await writePool.query(
-      `SELECT rt.*, u.role FROM refresh_tokens rt
-       JOIN users u ON u.id = rt.user_id
-       WHERE rt.token_hash = $1`,
-      [hash]
-    );
+    // Cross-tenant lookup via SECURITY DEFINER (no tenant context on refresh).
+    const tokenRes = await readPool.query(`SELECT * FROM auth_find_refresh_token($1)`, [hash]);
     const token = tokenRes.rows[0] as Record<string, unknown> | undefined;
 
     if (
@@ -128,10 +123,12 @@ authRouter.post(
     ) {
       // Token reuse detected — revoke entire family (refresh token rotation)
       if (token?.['family_id']) {
-        await writePool.query(
-          `UPDATE refresh_tokens SET is_revoked = true WHERE family_id = $1`,
-          [token['family_id']]
-        );
+        await withTransaction(String(token['company_id']), async (client) => {
+          await client.query(
+            `UPDATE refresh_tokens SET is_revoked = true WHERE family_id = $1`,
+            [token['family_id']]
+          );
+        });
       }
       res.clearCookie('refresh_token', { path: '/api/auth' });
       res.status(401).json({ error: 'unauthorized', message: 'Invalid or expired session' });
@@ -146,15 +143,17 @@ authRouter.post(
 
     const newRaw = randomUUID() + randomUUID();
     const newHash = createHash('sha256').update(newRaw).digest('hex');
-    const newTok = await writePool.query<{ id: string }>(
-      `INSERT INTO refresh_tokens (company_id, user_id, token_hash, family_id, absolute_expiry)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [token['company_id'], token['user_id'], newHash, token['family_id'], token['absolute_expiry']]
-    );
-    await writePool.query(
-      `UPDATE refresh_tokens SET replaced_by = $1 WHERE id = $2`,
-      [newTok.rows[0]!.id, token['id']]
-    );
+    await withTransaction(String(token['company_id']), async (client) => {
+      const newTok = await client.query<{ id: string }>(
+        `INSERT INTO refresh_tokens (company_id, user_id, token_hash, family_id, absolute_expiry)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [token['company_id'], token['user_id'], newHash, token['family_id'], token['absolute_expiry']]
+      );
+      await client.query(`UPDATE refresh_tokens SET replaced_by = $1 WHERE id = $2`, [
+        newTok.rows[0]!.id,
+        token['id'],
+      ]);
+    });
 
     res.cookie('refresh_token', newRaw, COOKIE_OPTS);
     res.json({ data: { access_token: newAccess, token_type: 'Bearer', expires_in: 900 } });
@@ -169,10 +168,9 @@ authRouter.post(
     const raw = req.cookies?.['refresh_token'] as string | undefined;
     if (raw) {
       const hash = createHash('sha256').update(raw).digest('hex');
-      await writePool.query(
-        `UPDATE refresh_tokens SET is_revoked = true WHERE token_hash = $1`,
-        [hash]
-      );
+      await withTransaction(req.auth.companyId, async (client) => {
+        await client.query(`UPDATE refresh_tokens SET is_revoked = true WHERE token_hash = $1`, [hash]);
+      });
     }
     res.clearCookie('refresh_token', { path: '/api/auth' });
     res.json({ data: { message: 'Logged out' } });
@@ -201,15 +199,6 @@ authRouter.post(
       last_name: string;
     };
 
-    const exists = await readPool.query(
-      `SELECT 1 FROM users WHERE LOWER(email) = LOWER($1)`,
-      [body.email]
-    );
-    if ((exists.rowCount ?? 0) > 0) {
-      res.status(409).json({ error: 'conflict', message: 'Email already registered' });
-      return;
-    }
-
     const hash = await argon2.hash(body.password, ARGON2_OPTS);
     const slug =
       body.company_name
@@ -219,43 +208,41 @@ authRouter.post(
       '-' +
       Date.now().toString(36);
 
-    const client = await writePool.connect();
+    // Bootstrap a new tenant via SECURITY DEFINER (no tenant context exists yet).
+    // A duplicate email raises 23505, which we map to 409.
+    let cid: string;
+    let uid: string;
     try {
-      await client.query('BEGIN');
-      const cRes = await client.query<{ id: string }>(
-        `INSERT INTO companies (name, slug) VALUES ($1, $2) RETURNING id`,
-        [body.company_name, slug]
+      const r = await writePool.query<{ company_id: string; user_id: string }>(
+        `SELECT company_id, user_id FROM auth_register($1, $2, $3, $4, $5, $6)`,
+        [body.company_name, slug, body.email, hash, body.first_name, body.last_name]
       );
-      const cid = cRes.rows[0]!.id;
-      const uRes = await client.query<{ id: string }>(
-        `INSERT INTO users (company_id, email, password_hash, first_name, last_name, role)
-         VALUES ($1, $2, $3, $4, $5, 'owner') RETURNING id`,
-        [cid, body.email, hash, body.first_name, body.last_name]
-      );
-      await client.query('COMMIT');
-
-      const token = signAccessToken({ userId: uRes.rows[0]!.id, companyId: cid, role: 'owner' });
-      res.status(201).json({
-        data: {
-          access_token: token,
-          token_type: 'Bearer',
-          expires_in: 900,
-          user: {
-            id: uRes.rows[0]!.id,
-            email: body.email,
-            first_name: body.first_name,
-            last_name: body.last_name,
-            role: 'owner',
-            company_id: cid,
-          },
-        },
-      });
+      cid = String(r.rows[0]!.company_id);
+      uid = String(r.rows[0]!.user_id);
     } catch (err) {
-      await client.query('ROLLBACK');
+      if ((err as { code?: string }).code === '23505') {
+        res.status(409).json({ error: 'conflict', message: 'Email already registered' });
+        return;
+      }
       throw err;
-    } finally {
-      client.release();
     }
+
+    const token = signAccessToken({ userId: uid, companyId: cid, role: 'owner' });
+    res.status(201).json({
+      data: {
+        access_token: token,
+        token_type: 'Bearer',
+        expires_in: 900,
+        user: {
+          id: uid,
+          email: body.email,
+          first_name: body.first_name,
+          last_name: body.last_name,
+          role: 'owner',
+          company_id: cid,
+        },
+      },
+    });
   })
 );
 
@@ -264,7 +251,8 @@ authRouter.get(
   '/me',
   authenticate,
   asyncHandler(async (req, res) => {
-    const r = await readPool.query(
+    const db = createRlsClient(readPool, req.auth.companyId);
+    const r = await db.query(
       `SELECT id, email, first_name, last_name, role, avatar_url, phone,
               job_title, is_active, company_id, last_login_at
        FROM users WHERE id = $1`,

@@ -98,7 +98,26 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
   LIMIT 1;
 $$;
 
+-- Registration bootstraps a brand-new tenant (company + owner user) before any
+-- tenant context exists, so it must also run outside RLS. A duplicate email
+-- raises unique_violation (23505), which the API maps to HTTP 409.
+CREATE OR REPLACE FUNCTION auth_register(
+  p_company_name text, p_slug text, p_email text,
+  p_password_hash text, p_first_name text, p_last_name text
+) RETURNS TABLE(company_id uuid, user_id uuid)
+LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE v_cid uuid; v_uid uuid;
+BEGIN
+  INSERT INTO companies (name, slug) VALUES (p_company_name, p_slug) RETURNING id INTO v_cid;
+  INSERT INTO users (company_id, email, password_hash, first_name, last_name, role)
+    VALUES (v_cid, p_email, p_password_hash, p_first_name, p_last_name, 'owner') RETURNING id INTO v_uid;
+  RETURN QUERY SELECT v_cid, v_uid;
+END;
+$$;
+
 REVOKE ALL ON FUNCTION auth_find_user_by_email(text)  FROM PUBLIC;
 REVOKE ALL ON FUNCTION auth_find_refresh_token(text)  FROM PUBLIC;
+REVOKE ALL ON FUNCTION auth_register(text,text,text,text,text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION auth_find_user_by_email(text)  TO constructpm_app;
 GRANT EXECUTE ON FUNCTION auth_find_refresh_token(text)  TO constructpm_app;
+GRANT EXECUTE ON FUNCTION auth_register(text,text,text,text,text,text) TO constructpm_app;
