@@ -334,3 +334,47 @@ export interface ApiError {
   details?: Record<string, string[]>;
   request_id?: string;
 }
+
+// ─── Subcontractor management ─────────────────────────────────────────────────
+
+export type SubcontractStatus = 'draft' | 'active' | 'complete' | 'closed' | 'void';
+
+export interface Subcontract {
+  id: string;
+  company_id: string;
+  job_id: string;
+  subcontractor_id: string;
+  subcontract_number?: string | null;
+  title: string;
+  cost_code?: string | null;
+  scope?: string | null;
+  contract_amount: number;
+  retainage_pct: number;
+  status: SubcontractStatus;
+  start_date?: string | null;
+  end_date?: string | null;
+  executed_date?: string | null;
+  notes?: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
+
+/** A subcontract with commitment figures derived from its linked pay applications (vendor_bills). */
+export interface SubcontractWithTotals extends Subcontract {
+  subcontractor_name: string;
+  certifications: string[];
+  billed: number;         // sum of pay-app totals
+  retainage_held: number; // retainage withheld across pay apps
+  paid: number;           // cash paid out
+  due: number;            // billed - retainage_held - paid
+  remaining: number;      // contract_amount - billed (uncommitted headroom on the sub)
+}
+
+export interface SubcontractParticipation {
+  total_committed: number;
+  certified_committed: number;
+  participation_pct: number;
+  by_certification: { certification: string; committed: number }[];
+}
