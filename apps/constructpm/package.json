@@ -1,0 +1,36 @@
+{
+  "name": "constructpm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ConstructPM — Construction Project Management Platform",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w packages/api\" \"npm run dev -w packages/web\"",
+    "dev:api": "npm run dev -w packages/api",
+    "dev:web": "npm run dev -w packages/web",
+    "build": "npm run build -w packages/shared && npm run build -w packages/api && npm run build -w packages/web",
+    "migrate": "npm run migrate -w packages/db",
+    "seed": "npm run seed -w packages/db",
+    "lint": "eslint packages --ext .ts,.tsx --max-warnings 0",
+    "typecheck": "tsc -b packages/api packages/web packages/shared",
+    "format": "prettier --write \"packages/**/*.{ts,tsx,json}\"",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "setup": "bash scripts/setup.sh"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "concurrently": "^8.2.2",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.2.5",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

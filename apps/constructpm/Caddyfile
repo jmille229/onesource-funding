@@ -1,0 +1,36 @@
+# ConstructPM — Caddy reverse proxy
+# Replace yourdomain.com with your actual domain.
+# Caddy automatically provisions and renews TLS certs via Let's Encrypt.
+
+yourdomain.com {
+    # Serve the React frontend
+    reverse_proxy web:80
+
+    # API requests — strip prefix and proxy to API container
+    handle /api/* {
+        reverse_proxy api:3001
+    }
+
+    # Health endpoint
+    handle /health {
+        reverse_proxy api:3001
+    }
+
+    # Security headers (Caddy adds HSTS automatically for HTTPS)
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+}
+
+# Redirect www → apex
+www.yourdomain.com {
+    redir https://yourdomain.com{uri} permanent
+}

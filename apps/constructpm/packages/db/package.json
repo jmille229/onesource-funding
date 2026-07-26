@@ -1,0 +1,20 @@
+{
+  "name": "@constructpm/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate": "node --import tsx/esm src/migrate.ts",
+    "seed": "node --import tsx/esm src/seed.ts"
+  },
+  "dependencies": {
+    "pg": "^8.11.5",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.5",
+    "@types/node": "^20.12.0",
+    "tsx": "^4.9.0",
+    "typescript": "*"
+  }
+}
