@@ -1,81 +1,185 @@
-# ConstructPM — Production Docker Compose
-# For cloud deployments: set all env vars via your platform's secret manager.
-# Do NOT commit a filled-in .env.production file.
+# ConstructPM — Turnkey single-VPS production stack
+# ─────────────────────────────────────────────────────────────────────────────
+# Everything the app needs runs here: Postgres, Redis, MinIO (S3), the API, the
+# static web bundle, and Caddy (automatic HTTPS). Provision a VPS, point your DNS
+# at it, fill in .env.production + ./secrets, then `docker compose ... up -d`.
+#
+# See DEPLOY.md for the copy-paste checklist.
+#
+# Only Caddy is exposed to the public internet (80/443). Everything else talks
+# over the internal `constructpm` network; nothing else binds a host port.
+
+name: constructpm
 
 services:
+  # ─── PostgreSQL 16 (tenant data, Row-Level Security) ────────────────────────
+  postgres:
+    image: postgres:16
+    restart: always
+    environment:
+      # Superuser that owns the schema and runs migrations. Has BYPASSRLS +
+      # CREATEROLE, which V002 needs to create the app role and FORCE RLS.
+      POSTGRES_USER: constructpm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+      POSTGRES_DB: constructpm
+      # Consumed by db-init.sh to set the RLS-scoped app role's login password.
+      CONSTRUCTPM_APP_PASSWORD: ${CONSTRUCTPM_APP_PASSWORD:?set CONSTRUCTPM_APP_PASSWORD in .env.production}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # First-boot only (runs when the data dir is empty): apply migrations +
+      # set the app-role password. Ordered 00- so it runs before anything else.
+      - ./infra/db-init.sh:/docker-entrypoint-initdb.d/00-init.sh:ro
+      - ./packages/db/migrations:/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U constructpm -d constructpm"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [constructpm]
+
+  # ─── Redis (sessions, rate-limit store, queues) ─────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: always
+    # requirepass so the cache isn't open on the internal network.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env.production}", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [constructpm]
+
+  # ─── MinIO (S3-compatible object storage for uploaded files) ────────────────
+  minio:
+    image: minio/minio:latest
+    restart: always
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env.production}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env.production}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [constructpm]
+
+  # ─── One-shot: create the files bucket on first boot, then exit ─────────────
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 '${S3_ACCESS_KEY}' '${S3_SECRET_KEY}' &&
+      mc mb --ignore-existing local/${S3_BUCKET_FILES:-constructpm-files} &&
+      echo 'bucket ready';
+      "
+    networks: [constructpm]
+    restart: "no"
+
+  # ─── API (Express, TypeScript) ──────────────────────────────────────────────
   api:
     build:
       context: .
       dockerfile: packages/api/Dockerfile
     image: constructpm-api:latest
     restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 3001
-      DATABASE_URL: ${DATABASE_URL}
-      DATABASE_READER_URL: ${DATABASE_READER_URL:-}
-      REDIS_URL: ${REDIS_URL}
+      # Connects as the RLS-scoped, non-owner app role (subject to RLS policies).
+      DATABASE_URL: postgresql://constructpm_app:${CONSTRUCTPM_APP_PASSWORD}@postgres:5432/constructpm
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
-      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
-      JWT_ISSUER: ${JWT_ISSUER}
-      JWT_AUDIENCE: ${JWT_AUDIENCE}
-      S3_ENDPOINT: ${S3_ENDPOINT}
-      S3_REGION: ${S3_REGION}
+      # JWT secret still required by the schema even though prod signs with RS256.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (>=64 chars) in .env.production}
+      # RS256 key pair mounted as files (see ./secrets) — read in by env.ts.
+      JWT_PRIVATE_KEY_FILE: /run/secrets/jwt_private.pem
+      JWT_PUBLIC_KEY_FILE: /run/secrets/jwt_public.pem
+      JWT_ISSUER: ${JWT_ISSUER:-constructpm}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-constructpm-app}
+      # Object storage → the in-stack MinIO service.
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
-      S3_BUCKET_FILES: ${S3_BUCKET_FILES}
-      S3_FORCE_PATH_STYLE: "false"
-      SMTP_HOST: ${SMTP_HOST}
-      SMTP_PORT: ${SMTP_PORT}
-      SMTP_SECURE: "true"
-      SMTP_USER: ${SMTP_USER}
-      SMTP_PASS: ${SMTP_PASS}
-      EMAIL_FROM: ${EMAIL_FROM}
-      APP_URL: ${APP_URL}
-      API_URL: ${API_URL}
-      SKIP_VIRUS_SCAN: "false"
-    ports:
-      - "127.0.0.1:3001:3001"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      S3_BUCKET_FILES: ${S3_BUCKET_FILES:-constructpm-files}
+      S3_FORCE_PATH_STYLE: "true"
+      # Email (optional — leave SMTP_HOST blank to disable outbound mail).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-true}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-noreply@os-funding.com}
+      APP_URL: https://${DOMAIN:?set DOMAIN in .env.production}
+      API_URL: https://${DOMAIN}
+      SKIP_VIRUS_SCAN: ${SKIP_VIRUS_SCAN:-true}
+    volumes:
+      - ./secrets/jwt_private.pem:/run/secrets/jwt_private.pem:ro
+      - ./secrets/jwt_public.pem:/run/secrets/jwt_public.pem:ro
     deploy:
       resources:
         limits:
           cpus: '1'
           memory: 512M
+    networks: [constructpm]
 
+  # ─── Web (static React bundle served by nginx) ──────────────────────────────
   web:
     build:
       context: .
       dockerfile: packages/web/Dockerfile
       args:
-        VITE_API_URL: ""   # Empty = relative URLs (same domain via reverse proxy)
+        # Same-origin: the browser calls /api/*, Caddy routes it to the API.
+        VITE_API_URL: "/api"
     image: constructpm-web:latest
     restart: always
-    ports:
-      - "127.0.0.1:8080:80"
     depends_on:
       - api
+    networks: [constructpm]
 
-  # Reverse proxy with TLS termination
+  # ─── Caddy (the only public entrypoint — automatic HTTPS) ───────────────────
   caddy:
     image: caddy:2-alpine
     restart: always
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
       - api
       - web
+    networks: [constructpm]
+
+networks:
+  constructpm:
+    driver: bridge
 
 volumes:
+  pg_data:
+  redis_data:
+  minio_data:
   caddy_data:
   caddy_config:

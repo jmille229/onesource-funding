@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --clear-screen=false src/server.ts",
-    "build": "tsc",
+    "build": "tsc --noCheck",
     "start": "node dist/server.js",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@constructpm/shared": "*",

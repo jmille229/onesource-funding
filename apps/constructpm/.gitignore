@@ -4,6 +4,9 @@
 .env.*.local
 .env.production
 
+# Deploy secrets (RS256 JWT key pair, mounted into the api container)
+secrets/
+
 # Dependencies
 node_modules/
 

@@ -1,36 +1,28 @@
-# ConstructPM — Caddy reverse proxy
-# Replace yourdomain.com with your actual domain.
-# Caddy automatically provisions and renews TLS certs via Let's Encrypt.
+# ConstructPM — Caddy reverse proxy (automatic HTTPS via Let's Encrypt)
+# DOMAIN is injected from .env.production by docker-compose.prod.yml.
 
-yourdomain.com {
-    # Serve the React frontend
-    reverse_proxy web:80
+{$DOMAIN} {
+	# API + health go to the Express container. `handle` blocks are matched in
+	# order; the API routes must come before the catch-all web route below.
+	handle /api/* {
+		reverse_proxy api:3001
+	}
 
-    # API requests — strip prefix and proxy to API container
-    handle /api/* {
-        reverse_proxy api:3001
-    }
+	handle /health {
+		reverse_proxy api:3001
+	}
 
-    # Health endpoint
-    handle /health {
-        reverse_proxy api:3001
-    }
+	# Everything else is the React single-page app (nginx serves index.html and
+	# handles client-side routing).
+	handle {
+		reverse_proxy web:80
+	}
 
-    # Security headers (Caddy adds HSTS automatically for HTTPS)
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        Referrer-Policy "strict-origin-when-cross-origin"
-    }
-
-    log {
-        output file /var/log/caddy/access.log
-        format json
-    }
-}
-
-# Redirect www → apex
-www.yourdomain.com {
-    redir https://yourdomain.com{uri} permanent
+	# Security headers (Caddy adds HSTS automatically for HTTPS).
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
 }

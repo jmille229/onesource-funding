@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -75,6 +76,17 @@ const envSchema = z.object({
   // JWT_SECRET has no default — this catches a missing value with a clear message
   // rather than silently using a known insecure string
 });
+
+// Docker-secrets convention: a `<VAR>_FILE` env var points to a mounted file whose
+// contents become `<VAR>`. This keeps multiline RS256 PEM keys (and any other secret)
+// out of the compose/.env files — they live as files on the host and are mounted in.
+// Only applied when the plain var isn't already set, so an inline value still wins.
+for (const key of ['JWT_PRIVATE_KEY', 'JWT_PUBLIC_KEY', 'DATABASE_SSL_CA', 'DATABASE_URL', 'DATABASE_READER_URL'] as const) {
+  const filePath = process.env[`${key}_FILE`];
+  if (filePath && !process.env[key]) {
+    process.env[key] = fs.readFileSync(filePath, 'utf8').trim();
+  }
+}
 
 const parsed = envSchema.safeParse(process.env);
 if (!parsed.success) {
