@@ -1,0 +1,120 @@
+# ConstructPM CI/CD
+#
+# Workflows only run from `.github/workflows` at the REPOSITORY ROOT — a copy
+# under apps/constructpm/ is inert, which is why this lives here rather than
+# next to the app.
+#
+# On a push to a ConstructPM branch: typecheck, unit tests, and tenant-isolation
+# tests against a real Postgres. On main: also build and publish the three images
+# to GHCR so deploying is a pull rather than a 10-minute build on the VPS.
+
+name: ConstructPM CI
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths: ['apps/constructpm/**', '.github/workflows/constructpm-ci.yml']
+  pull_request:
+    paths: ['apps/constructpm/**', '.github/workflows/constructpm-ci.yml']
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: apps/constructpm
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: constructpm
+          POSTGRES_PASSWORD: ci_postgres_pw
+          POSTGRES_DB: constructpm_test
+        options: >-
+          --health-cmd "pg_isready -U constructpm -d constructpm_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+        ports: ['5432:5432']
+    env:
+      MIGRATION_DATABASE_URL: postgresql://constructpm:ci_postgres_pw@localhost:5432/constructpm_test
+      CONSTRUCTPM_APP_PASSWORD: ci_app_pw
+      TEST_DATABASE_URL: postgresql://constructpm:ci_postgres_pw@localhost:5432/constructpm_test
+      TEST_APP_DATABASE_URL: postgresql://constructpm_app:ci_app_pw@localhost:5432/constructpm_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm', cache-dependency-path: apps/constructpm/package-lock.json }
+      - run: npm ci
+
+      # Applies migrations and provisions the RLS-scoped app role, exactly as the
+      # migrate service does on deploy — so a broken migration fails here first.
+      - name: Run migrations
+        run: npm run migrate
+
+      # The API build is `tsc` (not `tsc --noCheck`), so this type-checks it too.
+      - name: Typecheck and build
+        run: |
+          npm run build -w packages/shared
+          npm run typecheck -w packages/api
+          npm run typecheck -w packages/web
+          npm run build -w packages/api
+
+      # Unit tests plus tenant-isolation tests against the migrated database.
+      - name: Test
+        run: npm test -w packages/api
+
+      # Always report the audit; fail only on critical. High-and-below are
+      # surfaced without blocking, so an advisory in a transitive package that
+      # isn't reachable here can't wedge the pipeline. See SECURITY.md for the
+      # advisories reviewed and accepted.
+      - name: Dependency audit
+        if: always()
+        run: |
+          npm audit || true
+          npm audit --audit-level=critical
+
+  build-images:
+    name: Build & publish images
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: api
+            dockerfile: packages/api/Dockerfile
+          - name: web
+            dockerfile: packages/web/Dockerfile
+          - name: migrate
+            dockerfile: packages/db/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/constructpm
+          file: apps/constructpm/${{ matrix.dockerfile }}
+          push: true
+          # `latest` is what the VPS pulls; the SHA tag makes rollback possible
+          # (set IMAGE_TAG=<sha> in .env.production and re-up).
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/constructpm-${{ matrix.name }}:latest
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/constructpm-${{ matrix.name }}:${{ github.sha }}
+          build-args: ${{ matrix.name == 'web' && 'VITE_API_URL=/api' || '' }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

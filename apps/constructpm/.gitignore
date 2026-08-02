@@ -1,0 +1,48 @@
+# Environment — NEVER commit secrets
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Deploy secrets (RS256 JWT key pair, mounted into the api container)
+secrets/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.next/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# Runtime
+*.pid
+*.seed
+*.pid.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+coverage/
+.nyc_output/
+
+# Docker volumes (never commit data)
+postgres_data/
+redis_data/
+minio_data/
+
+# TypeScript build info
+*.tsbuildinfo
