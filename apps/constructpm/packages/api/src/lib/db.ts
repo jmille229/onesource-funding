@@ -3,12 +3,19 @@ import { validate as isUuid } from 'uuid';
 import { env } from './env.js';
 
 function buildSslConfig(): pg.ConnectionConfig['ssl'] {
-  if (env.NODE_ENV !== 'production') return false;
-  // SECURITY: rejectUnauthorized: true validates the server certificate.
-  // DATABASE_SSL_CA provides the CA cert for managed providers (RDS, Supabase, Neon).
-  // Without the CA, Node falls back to the system trust store — acceptable for
-  // providers whose cert chains are already in the Mozilla bundle (e.g. Neon, Railway),
-  // but explicit CA is required for AWS RDS and similar.
+  // DATABASE_SSL is an explicit switch rather than an inference from NODE_ENV.
+  //
+  // Both production topologies are legitimate and they need opposite settings:
+  //   - Managed Postgres over the public internet (RDS/Neon/Supabase) → TLS required.
+  //   - Postgres on a private Docker network on the same host → no TLS listener at
+  //     all, and forcing it fails the connection outright with "The server does not
+  //     support SSL connections".
+  // Deriving this from NODE_ENV silently broke the second case, so it is now
+  // configured directly. Default: on when a CA is supplied, otherwise off.
+  if (!env.DATABASE_SSL) return false;
+
+  // SECURITY: rejectUnauthorized validates the server certificate. DATABASE_SSL_CA
+  // supplies the CA for providers not in the system trust store (e.g. AWS RDS).
   return env.DATABASE_SSL_CA
     ? { rejectUnauthorized: true, ca: env.DATABASE_SSL_CA }
     : { rejectUnauthorized: true };

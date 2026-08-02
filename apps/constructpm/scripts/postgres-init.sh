@@ -1,24 +1,10 @@
 #!/bin/bash
+# Dev Postgres first-boot hook.
+#
+# Deliberately minimal: the schema, the constructpm_app role and all RLS policies
+# come from the migrations (npm run migrate), so dev and production get their
+# database from exactly the same source. Anything created here that migrations
+# don't also create would be drift that only exists on developer machines.
 set -e
 
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-  -- Application roles
-  DO \$\$
-  BEGIN
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN
-      CREATE ROLE app_user;
-    END IF;
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'audit_writer') THEN
-      CREATE ROLE audit_writer;
-    END IF;
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'audit_reader') THEN
-      CREATE ROLE audit_reader;
-    END IF;
-  END
-  \$\$;
-
-  -- Grant app role to the main user
-  GRANT app_user TO constructpm;
-  GRANT audit_writer TO constructpm;
-  GRANT audit_reader TO constructpm;
-EOSQL
+echo "[postgres-init] dev database ready — run 'npm run migrate' to apply the schema"

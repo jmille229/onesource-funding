@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
+import { buildUpdateSet } from '../../lib/sql.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const contactsRouter = Router();
@@ -17,6 +18,12 @@ const schema = z.object({
   license_number: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
 });
+
+// SECURITY: Explicit allowlist for the dynamic PATCH — see lib/sql.ts.
+const PATCHABLE_CONTACT_COLUMNS = [
+  'name', 'type', 'email', 'phone', 'address_line1', 'city', 'state_code',
+  'zip', 'license_number', 'notes', 'certifications',
+] as const;
 
 contactsRouter.get('/', asyncHandler(async (req, res) => {
   const { type, search } = req.query as Record<string, string>;
@@ -45,10 +52,10 @@ contactsRouter.post('/', requireRole('owner','admin','project_manager','accounta
 
 contactsRouter.patch('/:id', requireRole('owner','admin','project_manager','accountant'), validate(schema.partial()), asyncHandler(async (req, res) => {
   const body = req.body as Record<string, unknown>;
-  const keys = Object.keys(body);
-  if (!keys.length) { res.status(422).json({ error: 'validation_error', message: 'Nothing to update' }); return; }
+  const { clause, values } = buildUpdateSet(body, PATCHABLE_CONTACT_COLUMNS);
+  if (!clause) { res.status(422).json({ error: 'validation_error', message: 'Nothing to update' }); return; }
   const db = createRlsClient(writePool, req.auth.companyId);
-  const r = await db.query(`UPDATE contacts SET ${keys.map((k, i) => `${k}=$${i + 2}`).join(',')},updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL RETURNING *`, [req.params['id'], ...keys.map(k => body[k])]);
+  const r = await db.query(`UPDATE contacts SET ${clause},updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL RETURNING *`, [req.params['id'], ...values]);
   if (!r.rows[0]) { res.status(404).json({ error: 'not_found', message: 'Contact not found' }); return; }
   res.json({ data: r.rows[0] });
 }));

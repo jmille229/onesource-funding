@@ -1,15 +1,30 @@
-# ConstructPM — Turnkey single-VPS production stack
+# ConstructPM — single-VPS production stack
 # ─────────────────────────────────────────────────────────────────────────────
-# Everything the app needs runs here: Postgres, Redis, MinIO (S3), the API, the
-# static web bundle, and Caddy (automatic HTTPS). Provision a VPS, point your DNS
-# at it, fill in .env.production + ./secrets, then `docker compose ... up -d`.
+# Postgres, Redis, MinIO, the API, the web bundle and Caddy (automatic HTTPS).
+# Only Caddy is exposed publicly; everything else is private to the `constructpm`
+# network.
 #
-# See DEPLOY.md for the copy-paste checklist.
+# Two ways to run it:
 #
-# Only Caddy is exposed to the public internet (80/443). Everything else talks
-# over the internal `constructpm` network; nothing else binds a host port.
+#   Fast path (default) — images are built by CI and pulled from the registry:
+#     docker compose --env-file .env.production -f docker-compose.prod.yml pull
+#     docker compose --env-file .env.production -f docker-compose.prod.yml up -d
+#
+#   Build-on-server (no registry / local hacking):
+#     docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+#
+# Prefer the fast path: building on a 1–2 GB VPS takes ~10 minutes and competes
+# with the running app for memory. Pulling takes seconds.
+#
+# See DEPLOY.md.
 
 name: constructpm
+
+# Every container gets bounded logs. Without this, Docker's json-file driver grows
+# until it fills the disk — the classic way a small VPS dies months in.
+x-logging: &default-logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
 
 services:
   # ─── PostgreSQL 16 (tenant data, Row-Level Security) ────────────────────────
@@ -17,32 +32,47 @@ services:
     image: postgres:16
     restart: always
     environment:
-      # Superuser that owns the schema and runs migrations. Has BYPASSRLS +
-      # CREATEROLE, which V002 needs to create the app role and FORCE RLS.
+      # Owner role: runs migrations, owns the schema, has BYPASSRLS + CREATEROLE.
+      # The API never uses this role — it connects as constructpm_app, which is
+      # subject to RLS.
       POSTGRES_USER: constructpm
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
       POSTGRES_DB: constructpm
-      # Consumed by db-init.sh to set the RLS-scoped app role's login password.
-      CONSTRUCTPM_APP_PASSWORD: ${CONSTRUCTPM_APP_PASSWORD:?set CONSTRUCTPM_APP_PASSWORD in .env.production}
     volumes:
       - pg_data:/var/lib/postgresql/data
-      # First-boot only (runs when the data dir is empty): apply migrations +
-      # set the app-role password. Ordered 00- so it runs before anything else.
-      - ./infra/db-init.sh:/docker-entrypoint-initdb.d/00-init.sh:ro
-      - ./packages/db/migrations:/migrations:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U constructpm -d constructpm"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
+    logging: *default-logging
     networks: [constructpm]
 
-  # ─── Redis (sessions, rate-limit store, queues) ─────────────────────────────
+  # ─── Schema migrations (one-shot, runs on every deploy) ─────────────────────
+  # Applies only migrations not yet in schema_migrations, takes an advisory lock
+  # so concurrent deploys can't race, and sets/rotates the app role's password.
+  # The API waits for this to exit 0, so it never starts against a stale schema.
+  migrate:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-jmille229}/constructpm-migrate:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: packages/db/Dockerfile
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      MIGRATION_DATABASE_URL: postgresql://constructpm:${POSTGRES_PASSWORD}@postgres:5432/constructpm
+      CONSTRUCTPM_APP_PASSWORD: ${CONSTRUCTPM_APP_PASSWORD:?set CONSTRUCTPM_APP_PASSWORD in .env.production}
+    logging: *default-logging
+    networks: [constructpm]
+
+  # ─── Redis (rate limiting, caching) ─────────────────────────────────────────
   redis:
     image: redis:7-alpine
     restart: always
-    # requirepass so the cache isn't open on the internal network.
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env.production}", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -51,9 +81,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    logging: *default-logging
     networks: [constructpm]
 
-  # ─── MinIO (S3-compatible object storage for uploaded files) ────────────────
+  # ─── MinIO (S3-compatible storage for uploaded files) ───────────────────────
+  # Private to the Docker network. Downloads stream through the API rather than
+  # via presigned URLs, so the browser never needs to reach MinIO directly.
   minio:
     image: minio/minio:latest
     restart: always
@@ -69,9 +102,9 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    logging: *default-logging
     networks: [constructpm]
 
-  # ─── One-shot: create the files bucket on first boot, then exit ─────────────
   createbuckets:
     image: minio/mc:latest
     depends_on:
@@ -83,19 +116,20 @@ services:
       mc mb --ignore-existing local/${S3_BUCKET_FILES:-constructpm-files} &&
       echo 'bucket ready';
       "
-    networks: [constructpm]
     restart: "no"
+    logging: *default-logging
+    networks: [constructpm]
 
-  # ─── API (Express, TypeScript) ──────────────────────────────────────────────
+  # ─── API ────────────────────────────────────────────────────────────────────
   api:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-jmille229}/constructpm-api:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: packages/api/Dockerfile
-    image: constructpm-api:latest
     restart: always
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -103,25 +137,26 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      # Connects as the RLS-scoped, non-owner app role (subject to RLS policies).
+      # RLS-scoped, non-owner role — tenant isolation is enforced by the database.
       DATABASE_URL: postgresql://constructpm_app:${CONSTRUCTPM_APP_PASSWORD}@postgres:5432/constructpm
+      # Postgres is on a private Docker network with no TLS listener. Set true only
+      # for managed Postgres reached over the internet.
+      DATABASE_SSL: "false"
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      # JWT secret still required by the schema even though prod signs with RS256.
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (>=64 chars) in .env.production}
-      # RS256 key pair mounted as files (see ./secrets) — read in by env.ts.
+      # RS256 key pair mounted from ./secrets — never in the environment.
       JWT_PRIVATE_KEY_FILE: /run/secrets/jwt_private.pem
       JWT_PUBLIC_KEY_FILE: /run/secrets/jwt_public.pem
       JWT_ISSUER: ${JWT_ISSUER:-constructpm}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-constructpm-app}
-      # Object storage → the in-stack MinIO service.
       S3_ENDPOINT: http://minio:9000
       S3_REGION: us-east-1
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET_FILES: ${S3_BUCKET_FILES:-constructpm-files}
       S3_FORCE_PATH_STYLE: "true"
-      # Email (optional — leave SMTP_HOST blank to disable outbound mail).
+      # S3_PUBLIC_ENDPOINT intentionally unset — see files.router.ts.
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_SECURE: ${SMTP_SECURE:-true}
@@ -136,26 +171,24 @@ services:
       - ./secrets/jwt_public.pem:/run/secrets/jwt_public.pem:ro
     deploy:
       resources:
-        limits:
-          cpus: '1'
-          memory: 512M
+        limits: { cpus: '1', memory: 512M }
+    logging: *default-logging
     networks: [constructpm]
 
-  # ─── Web (static React bundle served by nginx) ──────────────────────────────
+  # ─── Web (static React bundle on nginx) ─────────────────────────────────────
   web:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-jmille229}/constructpm-web:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: packages/web/Dockerfile
       args:
-        # Same-origin: the browser calls /api/*, Caddy routes it to the API.
-        VITE_API_URL: "/api"
-    image: constructpm-web:latest
+        VITE_API_URL: "/api"   # Same-origin; Caddy routes /api to the API.
     restart: always
-    depends_on:
-      - api
+    depends_on: [api]
+    logging: *default-logging
     networks: [constructpm]
 
-  # ─── Caddy (the only public entrypoint — automatic HTTPS) ───────────────────
+  # ─── Caddy (only public entrypoint — automatic HTTPS) ───────────────────────
   caddy:
     image: caddy:2-alpine
     restart: always
@@ -168,9 +201,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    depends_on:
-      - api
-      - web
+    depends_on: [api, web]
+    logging: *default-logging
     networks: [constructpm]
 
 networks:

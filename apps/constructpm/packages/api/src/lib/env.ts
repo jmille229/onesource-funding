@@ -41,6 +41,11 @@ const envSchema = z.object({
   S3_SECRET_KEY: z.string().min(1, 'S3_SECRET_KEY is required'),
   S3_BUCKET_FILES: z.string().default('constructpm-files'),
   S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
+  // Browser-reachable object-store URL. Set this only when the store is exposed
+  // publicly (real S3, or MinIO on its own hostname) — it switches downloads to
+  // presigned URLs. Unset means downloads stream through the API, which is what
+  // the single-VPS stack does since MinIO there is private to the Docker network.
+  S3_PUBLIC_ENDPOINT: z.string().optional(),
 
   // Email
   SMTP_HOST: z.string().default('localhost'),
@@ -54,7 +59,10 @@ const envSchema = z.object({
   APP_URL: z.string().default('http://localhost:5173'),
   API_URL: z.string().default('http://localhost:3001'),
 
-  // Database SSL CA cert (optional — provide for managed DBs like RDS/Supabase)
+  // Database TLS. Set DATABASE_SSL=true for managed Postgres reached over the
+  // public internet; leave false for Postgres on a private Docker network, which
+  // has no TLS listener (forcing it there fails the connection outright).
+  DATABASE_SSL: z.coerce.boolean().default(false),
   DATABASE_SSL_CA: z.string().optional(),  // PEM content of the CA cert
 
   // Feature flags

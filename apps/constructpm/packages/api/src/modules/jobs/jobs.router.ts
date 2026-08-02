@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
+import { buildUpdateSet } from '../../lib/sql.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const jobsRouter = Router();
@@ -23,6 +24,15 @@ const jobSchema = z.object({
   retainage_pct: z.number().min(0).max(100).default(10),
   prevailing_wage_required: z.boolean().default(false),
 });
+
+// SECURITY: Explicit allowlist for the dynamic PATCH. Zod already strips unknown
+// keys, but naming the columns here means the SET clause can never depend on the
+// schema staying in sync — and company_id/id can never be reassigned.
+const PATCHABLE_JOB_COLUMNS = [
+  'name', 'job_number', 'description', 'status', 'contract_type', 'contract_amount',
+  'start_date', 'end_date', 'address_line1', 'city', 'state_code', 'zip',
+  'customer_id', 'project_manager_id', 'retainage_pct', 'prevailing_wage_required',
+] as const;
 
 // GET /api/jobs
 jobsRouter.get('/', asyncHandler(async (req, res) => {
@@ -94,9 +104,10 @@ jobsRouter.post('/', requireRole('owner','admin','project_manager'), validate(jo
 // PATCH /api/jobs/:id
 jobsRouter.patch('/:id', requireRole('owner','admin','project_manager'), validate(jobSchema.partial()), asyncHandler(async (req, res) => {
   const body = req.body as Record<string,unknown>;
-  const keys = Object.keys(body); if (!keys.length) { res.status(422).json({ error:'validation_error',message:'Nothing to update' }); return; }
+  const { clause, values } = buildUpdateSet(body, PATCHABLE_JOB_COLUMNS);
+  if (!clause) { res.status(422).json({ error:'validation_error',message:'Nothing to update' }); return; }
   const db = createRlsClient(writePool, req.auth.companyId);
-  const r = await db.query(`UPDATE jobs SET ${keys.map((k,i)=>`${k}=$${i+2}`).join(',')},updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL RETURNING *`,[req.params['id'],...keys.map(k=>body[k])]);
+  const r = await db.query(`UPDATE jobs SET ${clause},updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL RETURNING *`,[req.params['id'],...values]);
   if (!r.rows[0]) { res.status(404).json({ error:'not_found',message:'Job not found' }); return; }
   res.json({ data: r.rows[0] });
 }));

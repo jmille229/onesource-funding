@@ -63,17 +63,22 @@ which is gitignored and mounted read-only into the API container):
 ## 4. Launch
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+./infra/deploy.sh
 ```
 
-First boot does everything automatically:
+That pulls the images CI published, runs migrations, starts everything, and waits
+for the API to report healthy. First boot:
 
-1. **Postgres** initializes, then `infra/db-init.sh` applies every migration
-   (`packages/db/migrations/V*.sql`) and sets the `constructpm_app` role password.
-2. **MinIO** starts and `createbuckets` creates the files bucket.
-3. **Redis** comes up password-protected.
-4. **API** waits for all three to be healthy, then starts.
-5. **Caddy** requests a Let's Encrypt certificate for your domain and serves HTTPS.
+1. **Postgres** starts.
+2. **migrate** applies every migration and provisions the `constructpm_app` role.
+3. **Redis** comes up password-protected; **MinIO** starts and `createbuckets`
+   creates the files bucket.
+4. **API** starts — only after migrations succeeded.
+5. **Caddy** requests a Let's Encrypt certificate and serves HTTPS.
+
+> **No images published yet?** If CI hasn't run on `main` yet, build locally once:
+> `docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build`
+> (~10 min on a small VPS). Every deploy after that uses `./infra/deploy.sh`.
 
 Watch it come up:
 
@@ -101,30 +106,41 @@ Then open the site and register the first account.
 
 ## Day-2 operations
 
-**Update to the latest code:**
+### Shipping a change
+
+1. Push to `main` (or merge a PR). CI typechecks, runs the tests — including
+   tenant-isolation tests against a real Postgres — and publishes new images.
+2. On the VPS:
 
 ```bash
-git pull
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+cd onesource-funding && git pull
+cd apps/constructpm && ./infra/deploy.sh
 ```
 
-The DB init script only runs on an **empty** data directory. To apply a migration
-added after first boot, run it against the live database as the superuser:
+Takes about 30 seconds. Migrations are applied automatically as part of the
+deploy: the one-shot `migrate` service runs `packages/db/migrations/V*.sql`,
+skipping anything already recorded in `schema_migrations`, and the API refuses to
+start until it succeeds. Adding a migration means dropping a new
+`V00X__name.sql` in that folder — nothing else to wire up.
+
+**Roll back** to any previous build by pinning its commit SHA:
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml \
-  exec -T postgres psql -U constructpm -d constructpm < packages/db/migrations/V00X__whatever.sql
+IMAGE_TAG=a1b2c3d ./infra/deploy.sh
 ```
 
-**Back up the database:**
+### Backups
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml \
-  exec -T postgres pg_dump -U constructpm constructpm | gzip > backup-$(date +%F).sql.gz
+chmod +x infra/backup.sh
+sudo crontab -e
+# nightly at 3am:
+0 3 * * * /root/onesource-funding/apps/constructpm/infra/backup.sh >> /var/log/constructpm-backup.log 2>&1
 ```
 
-**Back up uploaded files:** they live in the `minio_data` Docker volume — snapshot
-it or `mc mirror` to an off-box bucket.
+Dumps the database and mirrors uploaded files into `./backups`, pruning after 14
+days. That covers application mistakes but **not** losing the VPS itself — copy
+`./backups` off-box (S3, Backblaze, rsync elsewhere) for real durability.
 
 **Stop / start (keeps your data):**
 
@@ -146,7 +162,8 @@ run that unless you mean to wipe everything.
 | `web`          | React SPA served by nginx                               | no      |
 | `api`          | Express API (connects to Postgres as `constructpm_app`) | no      |
 | `postgres`     | Tenant data with Row-Level Security                     | no      |
-| `redis`        | Sessions, rate limiting                                 | no      |
+| `migrate`      | One-shot schema migration on each deploy, then exits    | no      |
+| `redis`        | Rate limiting, caching                                  | no      |
 | `minio`        | S3-compatible file storage                              | no      |
 | `createbuckets`| One-shot bucket creation, then exits                    | no      |
 
@@ -154,11 +171,22 @@ Only Caddy is reachable from the internet. The browser calls `/api/*` on your
 domain; Caddy routes those to the API and everything else to the SPA, so there's
 no CORS and no second hostname to manage.
 
+File downloads stream through the API rather than via presigned URLs, because
+MinIO is private to the Docker network and a presigned `http://minio:9000/...`
+URL resolves for the API container and for nobody else. If you later move to real
+S3 or expose MinIO on its own hostname, set `S3_PUBLIC_ENDPOINT` and the API
+switches back to presigned URLs automatically.
+
 ### Security notes
 
 - The API connects as **`constructpm_app`**, a non-owner role subject to
   Row-Level Security — tenant isolation holds even if application code has a bug.
+  Seven tests in CI assert this against a real database on every push.
 - Access tokens are signed with **RS256**; the private key is a mounted file,
   never an environment variable or a value in git.
 - Secrets live only in `.env.production` and `./secrets/` on the server, both
   gitignored.
+- Dynamic `UPDATE` statements go through `buildUpdateSet` (`packages/api/src/lib/sql.ts`),
+  which only emits column names from a hard-coded allowlist. Use it for any new
+  PATCH endpoint — interpolating `Object.keys(req.body)` into SQL is a confirmed
+  injection vector, and there is a regression test for it.

@@ -48,8 +48,14 @@ changeOrdersRouter.patch('/:id/status', requireRole('owner','admin'), asyncHandl
   const allowed = ['sent','approved','rejected','void'];
   if (!allowed.includes(status)) { res.status(422).json({ error: 'validation_error', message: `Status must be one of: ${allowed.join(', ')}` }); return; }
   const db = createRlsClient(writePool, req.auth.companyId);
-  const extra = status === 'approved' ? `,approved_by='${req.auth.userId}',approved_at=NOW()` : '';
-  const r = await db.query(`UPDATE change_orders SET status=$2${extra},updated_at=NOW() WHERE id=$1 RETURNING *`, [req.params['id'], status]);
+  // SECURITY: approved_by is bound as $3, never interpolated. It comes from a
+  // signed JWT today, but interpolating identifiers into SQL is the pattern that
+  // turns a future refactor into an injection.
+  const approving = status === 'approved';
+  const r = await db.query(
+    `UPDATE change_orders SET status=$2${approving ? ',approved_by=$3,approved_at=NOW()' : ''},updated_at=NOW() WHERE id=$1 RETURNING *`,
+    approving ? [req.params['id'], status, req.auth.userId] : [req.params['id'], status]
+  );
   if (!r.rows[0]) { res.status(404).json({ error: 'not_found', message: 'Change order not found' }); return; }
   res.json({ data: r.rows[0] });
 }));

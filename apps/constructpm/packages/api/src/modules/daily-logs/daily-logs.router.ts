@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
+import { buildUpdateSet } from '../../lib/sql.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const dailyLogsRouter = Router();
@@ -48,12 +49,18 @@ dailyLogsRouter.post('/', requireRole('owner','admin','project_manager','field_c
   res.status(201).json({ data: r.rows[0] });
 }));
 
-dailyLogsRouter.patch('/:id', requireRole('owner','admin','project_manager','field_crew'), asyncHandler(async (req, res) => {
+// job_id and log_date are deliberately not patchable — they form the natural key
+// used by the POST upsert's ON CONFLICT target.
+const PATCHABLE_DAILY_LOG_COLUMNS = [
+  'weather', 'temperature_high', 'temperature_low', 'summary', 'delays', 'visitors',
+] as const;
+
+dailyLogsRouter.patch('/:id', requireRole('owner','admin','project_manager','field_crew'), validate(schema.partial()), asyncHandler(async (req, res) => {
   const body = req.body as Record<string, unknown>;
-  const keys = Object.keys(body).filter(k => !['job_id','log_date'].includes(k));
-  if (!keys.length) { res.status(422).json({ error: 'validation_error', message: 'Nothing to update' }); return; }
+  const { clause, values } = buildUpdateSet(body, PATCHABLE_DAILY_LOG_COLUMNS);
+  if (!clause) { res.status(422).json({ error: 'validation_error', message: 'Nothing to update' }); return; }
   const db = createRlsClient(writePool, req.auth.companyId);
-  const r = await db.query(`UPDATE daily_logs SET ${keys.map((k, i) => `${k}=$${i + 2}`).join(',')},updated_at=NOW() WHERE id=$1 RETURNING *`, [req.params['id'], ...keys.map(k => body[k])]);
+  const r = await db.query(`UPDATE daily_logs SET ${clause}, updated_at=NOW() WHERE id=$1 RETURNING *`, [req.params['id'], ...values]);
   if (!r.rows[0]) { res.status(404).json({ error: 'not_found', message: 'Log not found' }); return; }
   res.json({ data: r.rows[0] });
 }));
