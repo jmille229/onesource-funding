@@ -18,9 +18,12 @@ echo "▶ pulling images"
 $COMPOSE pull --quiet postgres redis minio api web migrate caddy
 
 echo "▶ applying migrations"
-# Runs to completion before anything else starts; a failure aborts the deploy
-# with the old containers still serving traffic.
-$COMPOSE up --exit-code-from migrate migrate
+# `run --rm` runs the one-shot to completion and returns its exit code, starting
+# only what it depends on. Do NOT use `up --exit-code-from migrate`: that implies
+# --abort-on-container-exit, which stops every running container the moment
+# migrate finishes — taking the database down mid-deploy for no reason.
+# A failure here aborts the deploy with the old containers still serving traffic.
+$COMPOSE run --rm migrate
 
 echo "▶ starting services"
 $COMPOSE up -d --remove-orphans
