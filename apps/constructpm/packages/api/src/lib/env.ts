@@ -13,6 +13,27 @@ if (process.env['NODE_ENV'] !== 'production') {
   dotenv.config({ path: path.join(__dirname, '../../../../.env.local') });
 }
 
+/**
+ * Boolean environment variable.
+ *
+ * NOT z.coerce.boolean() — that is `Boolean(value)`, and every non-empty string
+ * is truthy, so the string "false" parses as **true**. Setting DATABASE_SSL=false
+ * silently enabled TLS and made every query against a non-TLS Postgres fail with
+ * "The server does not support SSL connections".
+ *
+ * Parses the strings people actually write, and rejects anything ambiguous rather
+ * than guessing.
+ */
+const zBool = (defaultValue: boolean) =>
+  z.preprocess((v) => {
+    if (typeof v !== 'string') return v;
+    const s = v.trim().toLowerCase();
+    if (s === '') return undefined;                       // unset → use the default
+    if (['true', '1', 'yes', 'on'].includes(s)) return true;
+    if (['false', '0', 'no', 'off'].includes(s)) return false;
+    return v;                                             // invalid → schema error
+  }, z.boolean().default(defaultValue));
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(3001),
@@ -40,7 +61,7 @@ const envSchema = z.object({
   S3_ACCESS_KEY: z.string().min(1, 'S3_ACCESS_KEY is required'),
   S3_SECRET_KEY: z.string().min(1, 'S3_SECRET_KEY is required'),
   S3_BUCKET_FILES: z.string().default('constructpm-files'),
-  S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
+  S3_FORCE_PATH_STYLE: zBool(true),
   // Browser-reachable object-store URL. Set this only when the store is exposed
   // publicly (real S3, or MinIO on its own hostname) — it switches downloads to
   // presigned URLs. Unset means downloads stream through the API, which is what
@@ -50,7 +71,7 @@ const envSchema = z.object({
   // Email
   SMTP_HOST: z.string().default('localhost'),
   SMTP_PORT: z.coerce.number().default(1025),
-  SMTP_SECURE: z.coerce.boolean().default(false),
+  SMTP_SECURE: zBool(false),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   EMAIL_FROM: z.string().default('noreply@constructpm.local'),
@@ -62,11 +83,11 @@ const envSchema = z.object({
   // Database TLS. Set DATABASE_SSL=true for managed Postgres reached over the
   // public internet; leave false for Postgres on a private Docker network, which
   // has no TLS listener (forcing it there fails the connection outright).
-  DATABASE_SSL: z.coerce.boolean().default(false),
+  DATABASE_SSL: zBool(false),
   DATABASE_SSL_CA: z.string().optional(),  // PEM content of the CA cert
 
   // Feature flags
-  SKIP_VIRUS_SCAN: z.coerce.boolean().default(false),
+  SKIP_VIRUS_SCAN: zBool(false),
 
   // Stripe
   STRIPE_SECRET_KEY: z.string().optional(),
