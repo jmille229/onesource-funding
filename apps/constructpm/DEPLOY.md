@@ -35,6 +35,25 @@ git clone https://github.com/jmille229/onesource-funding.git
 cd onesource-funding/apps/constructpm
 ```
 
+## 2b. Make sure the server can pull the images
+
+CI publishes `constructpm-api`, `constructpm-web` and `constructpm-migrate` to
+GitHub Container Registry. Packages published by Actions start **private** even
+when the repository is public, so pick one:
+
+**Either** make them public (no credentials on the server) — for each package at
+`https://github.com/users/jmille229/packages/container/<name>/settings`, under
+*Danger Zone* choose **Change visibility → Public**.
+
+**Or** log the server in to GHCR with a token that has `read:packages`:
+
+```bash
+echo "<YOUR_TOKEN>" | docker login ghcr.io -u jmille229 --password-stdin
+```
+
+If you skip this, `./infra/deploy.sh` fails at the pull step with `denied` or
+`unauthorized`.
+
 ---
 
 ## 3. Create the config and secrets
