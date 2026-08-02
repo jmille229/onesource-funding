@@ -10,10 +10,19 @@ interface User {
   company_id: string;
 }
 
+export interface RegisterInput {
+  company_name: string;
+  email: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+}
+
 interface AuthState {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
   loadUser: () => Promise<void>;
 }
@@ -28,6 +37,15 @@ export const useAuthStore = create<AuthState>((set) => ({
     // SECURITY: Token stored in memory only — not localStorage
     setAccessToken(access_token);
     set({ user });
+  },
+
+  // Creates the company and its first owner account in one call, and returns an
+  // access token, so a new tenant lands straight in the app.
+  register: async (input) => {
+    const res = await api.post('/auth/register', input);
+    const { access_token, user } = res.data.data;
+    setAccessToken(access_token);
+    set({ user, loading: false });
   },
 
   logout: async () => {

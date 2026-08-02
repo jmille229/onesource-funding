@@ -5,6 +5,7 @@ import { Toaster } from 'sonner';
 import { useAuthStore } from './stores/auth.store';
 import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './pages/auth/LoginPage';
+import { RegisterPage } from './pages/auth/RegisterPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { JobsPage } from './pages/jobs/JobsPage';
 import { JobDetailPage } from './pages/jobs/JobDetailPage';
@@ -52,6 +53,7 @@ export default function App() {
         <Toaster position="top-right" richColors />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
           <Route
             path="/"
             element={

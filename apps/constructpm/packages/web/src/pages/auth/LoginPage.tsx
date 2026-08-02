@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { HardHat, Loader2 } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth.store';
 import { toast } from 'sonner';
 
 export function LoginPage() {
-  const [email, setEmail] = useState('admin@hartwell.com');
-  const [password, setPassword] = useState('demo1234');
+  // Start empty. These fields used to be pre-filled with seed-data credentials,
+  // which don't exist in a real deployment — the form looked broken before you
+  // typed anything, and advertising credentials in the UI is a bad habit.
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const login = useAuthStore(s => s.login);
   const navigate = useNavigate();
@@ -56,11 +59,12 @@ export function LoginPage() {
             </button>
           </form>
 
-          <div className="mt-6 p-3 bg-slate-50 rounded-md border border-slate-200">
-            <p className="text-xs text-slate-600 font-medium mb-1">Demo credentials</p>
-            <p className="text-xs text-slate-500">Email: admin@hartwell.com</p>
-            <p className="text-xs text-slate-500">Password: demo1234</p>
-          </div>
+          <p className="text-sm text-slate-500 mt-6 text-center">
+            New here?{' '}
+            <Link to="/register" className="text-brand-600 font-medium hover:underline">
+              Create your company
+            </Link>
+          </p>
         </div>
       </div>
     </div>

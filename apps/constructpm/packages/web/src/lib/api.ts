@@ -34,7 +34,15 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Never try to refresh the refresh call itself. The auth store probes
+    // /auth/refresh on every page load to restore a session; when there is no
+    // cookie that 401s, and treating it as "session expired" sent the browser to
+    // /login via a full page load — which remounted the app, probed again, and
+    // reloaded forever. Let the caller handle this 401.
+    const url: string = originalRequest?.url ?? '';
+    const isAuthProbe = url.includes('/auth/refresh') || url.includes('/auth/login');
+
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthProbe) {
       originalRequest._retry = true;
 
       // Deduplicate concurrent refresh calls
@@ -48,7 +56,13 @@ api.interceptors.response.use(
           })
           .catch(() => {
             setAccessToken(null);
-            window.location.href = '/login';
+            // Redirect via the router-friendly path, and only when we're not
+            // already on an auth screen — assigning location while /login is
+            // open is what produced the reload loop.
+            const path = window.location.pathname;
+            if (path !== '/login' && path !== '/register') {
+              window.location.assign('/login');
+            }
             return null;
           })
           .finally(() => { _refreshPromise = null; });

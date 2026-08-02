@@ -36,9 +36,12 @@ $COMPOSE run --rm migrate
 echo "▶ starting services"
 $COMPOSE up -d --remove-orphans
 
-echo "▶ waiting for the API to report healthy"
+echo "▶ waiting for the API to report ready"
+# /health/ready, not /health: the latter returns static JSON without touching
+# Postgres, so a deploy could report success while the API could not run a single
+# query (this is exactly how a bad DATABASE_SSL value shipped unnoticed).
 for i in $(seq 1 30); do
-  if $COMPOSE exec -T api node -e "require('http').get('http://localhost:3001/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" 2>/dev/null; then
+  if $COMPOSE exec -T api node -e "require('http').get('http://localhost:3001/health/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" 2>/dev/null; then
     echo "✅ deployed — $($COMPOSE ps --format '{{.Service}}' | tr '\n' ' ')"
     exit 0
   fi
