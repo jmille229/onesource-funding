@@ -37,8 +37,8 @@ jobs:
           POSTGRES_PASSWORD: ci_postgres_pw
           POSTGRES_DB: constructpm_test
         options: >-
-          --health-cmd pg_isready --health-interval 5s
-          --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U constructpm -d constructpm_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
         ports: ['5432:5432']
     env:
       MIGRATION_DATABASE_URL: postgresql://constructpm:ci_postgres_pw@localhost:5432/constructpm_test
