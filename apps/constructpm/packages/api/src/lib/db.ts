@@ -55,7 +55,7 @@ function assertValidCompanyId(companyId: string): void {
 export function createRlsClient(pool: pg.Pool, companyId: string) {
   assertValidCompanyId(companyId);
   return {
-    async query<T = Record<string, unknown>>(sql: string, params?: unknown[]) {
+    async query<T extends pg.QueryResultRow = Record<string, unknown>>(sql: string, params?: unknown[]) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');

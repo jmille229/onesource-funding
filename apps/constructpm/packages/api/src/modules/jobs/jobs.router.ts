@@ -25,6 +25,10 @@ const jobSchema = z.object({
   prevailing_wage_required: z.boolean().default(false),
 });
 
+// Postgres returns SUM()/COUNT() as strings, not numbers.
+type JobFinancialRow = { budget: string; price: string; committed: string; actual: string; invoiced: string };
+type JobTaskCountRow = { total: string; completed: string; in_progress: string };
+
 // SECURITY: Explicit allowlist for the dynamic PATCH. Zod already strips unknown
 // keys, but naming the columns here means the SET clause can never depend on the
 // schema staying in sync — and company_id/id can never be reassigned.
@@ -124,9 +128,16 @@ jobsRouter.delete('/:id', requireRole('owner','admin'), asyncHandler(async (req,
 jobsRouter.get('/:id/summary', asyncHandler(async (req, res) => {
   const db = createRlsClient(readPool, req.auth.companyId);
   const [fin, tasks] = await Promise.all([
-    db.query(`SELECT COALESCE(SUM(bi.ext_cost),0) budget,COALESCE(SUM(bi.ext_price),0) price,COALESCE(SUM(d.committed_amount),0) committed,COALESCE(SUM(d.actual_amount),0) actual,COALESCE(SUM(d.invoiced_amount),0) invoiced FROM budget_items bi LEFT JOIN budget_item_depletion_summary d ON d.budget_item_id=bi.id WHERE bi.job_id=$1 AND bi.deleted_at IS NULL`,[req.params['id']]),
-    db.query<{total:string;completed:string;in_progress:string}>(`SELECT COUNT(*) total,COUNT(*) FILTER (WHERE status='completed') completed,COUNT(*) FILTER (WHERE status='in_progress') in_progress FROM tasks WHERE job_id=$1 AND deleted_at IS NULL`,[req.params['id']]),
+    db.query<JobFinancialRow>(`SELECT COALESCE(SUM(bi.ext_cost),0) budget,COALESCE(SUM(bi.ext_price),0) price,COALESCE(SUM(d.committed_amount),0) committed,COALESCE(SUM(d.actual_amount),0) actual,COALESCE(SUM(d.invoiced_amount),0) invoiced FROM budget_items bi LEFT JOIN budget_item_depletion_summary d ON d.budget_item_id=bi.id WHERE bi.job_id=$1 AND bi.deleted_at IS NULL`,[req.params['id']]),
+    db.query<JobTaskCountRow>(`SELECT COUNT(*) total,COUNT(*) FILTER (WHERE status='completed') completed,COUNT(*) FILTER (WHERE status='in_progress') in_progress FROM tasks WHERE job_id=$1 AND deleted_at IS NULL`,[req.params['id']]),
   ]);
-  const f = fin.rows[0]; const t = tasks.rows[0];
-  res.json({ data: { financial: { budget: +f?.budget, price: +f?.price, committed: +f?.committed, actual: +f?.actual, invoiced: +f?.invoiced }, tasks: { total: +t?.total, completed: +t?.completed, in_progress: +t?.in_progress, pct: t?.total && +t.total ? Math.round(+t.completed/+t.total*100) : 0 } } });
+  // Both aggregates always return one row, but defaulting keeps the response
+  // numeric rather than NaN if a query ever comes back empty.
+  const f = fin.rows[0]   ?? { budget:'0', price:'0', committed:'0', actual:'0', invoiced:'0' };
+  const t = tasks.rows[0] ?? { total:'0', completed:'0', in_progress:'0' };
+  const totalTasks = Number(t.total);
+  res.json({ data: {
+    financial: { budget: Number(f.budget), price: Number(f.price), committed: Number(f.committed), actual: Number(f.actual), invoiced: Number(f.invoiced) },
+    tasks: { total: totalTasks, completed: Number(t.completed), in_progress: Number(t.in_progress), pct: totalTasks ? Math.round(Number(t.completed)/totalTasks*100) : 0 },
+  } });
 }));

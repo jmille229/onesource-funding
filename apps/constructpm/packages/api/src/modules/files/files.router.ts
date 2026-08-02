@@ -2,7 +2,7 @@ import { Router } from 'express';
 import path from 'path';
 import { PassThrough } from 'stream';
 import busboy from 'busboy';
-import { fileTypeFromStream } from 'file-type';
+import { fileTypeFromBuffer } from 'file-type';
 import { Upload } from '@aws-sdk/lib-storage';
 import {
   S3Client,
@@ -189,11 +189,11 @@ filesRouter.post(
           const validate = async () => {
             if (HEADER_ONLY_TYPES.has(claimedMime)) return; // no magic bytes for text
 
+            // The detection bytes are already buffered, so sniff the buffer
+            // directly — no need to wrap it back into a stream (and file-type's
+            // stream API expects a web ReadableStream as of v22).
             const detectionBuffer = Buffer.concat(detectionChunks);
-            const readable = new PassThrough();
-            readable.end(detectionBuffer);
-
-            const detected = await fileTypeFromStream(readable);
+            const detected = await fileTypeFromBuffer(detectionBuffer);
             if (!detected) {
               throw Object.assign(
                 new Error('Could not determine file type from content'),

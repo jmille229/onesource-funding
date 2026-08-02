@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import Decimal from 'decimal.js';
+import { Decimal } from 'decimal.js';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
+
+type BudgetTotals = { ext_cost: number; ext_price: number; committed: number; actual: number };
 
 export const budgetRouter = Router();
 
@@ -23,7 +25,14 @@ budgetRouter.get('/:jobId', asyncHandler(async (req, res) => {
       [req.params['jobId']]
     ),
   ]);
-  const t = items.rows.reduce((a, i) => ({ ext_cost: a.ext_cost + +i['ext_cost'], ext_price: a.ext_price + +i['ext_price'], committed: a.committed + +i['committed'], actual: a.actual + +i['actual'] }), { ext_cost: 0, ext_price: 0, committed: 0, actual: 0 });
+  // Postgres returns numerics as strings; Number() coerces safely from unknown
+  // (unary + does not type-check against unknown) and treats a missing column as 0.
+  const t = items.rows.reduce<BudgetTotals>((a, i) => ({
+    ext_cost:  a.ext_cost  + Number(i['ext_cost']  ?? 0),
+    ext_price: a.ext_price + Number(i['ext_price'] ?? 0),
+    committed: a.committed + Number(i['committed'] ?? 0),
+    actual:    a.actual    + Number(i['actual']    ?? 0),
+  }), { ext_cost: 0, ext_price: 0, committed: 0, actual: 0 });
   res.json({ data: { budget: budget.rows[0] ?? null, budget_groups: groups.rows, budget_items: items.rows, totals: { ...t, gross_profit: t.ext_price - t.ext_cost, margin_pct: t.ext_price ? ((t.ext_price - t.ext_cost) / t.ext_price * 100).toFixed(1) : '0.0' } } });
 }));
 

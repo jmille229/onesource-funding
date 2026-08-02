@@ -1,7 +1,7 @@
 # ─── Build stage ──────────────────────────────────────────────────────────────
 # node:20-slim (Debian/glibc, not Alpine/musl) so the native `argon2` module
 # installs from a prebuilt binary instead of compiling from source.
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 WORKDIR /app
 
 # Copy workspace manifests
@@ -22,7 +22,7 @@ COPY packages/db     ./packages/db
 RUN npm run build -w packages/shared && npm run build -w packages/api
 
 # ─── Production stage ─────────────────────────────────────────────────────────
-FROM node:20-slim AS production
+FROM node:22-slim AS production
 WORKDIR /app
 ENV NODE_ENV=production
 

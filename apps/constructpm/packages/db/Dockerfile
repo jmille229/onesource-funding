@@ -1,7 +1,7 @@
 # Migration runner — a one-shot container that brings the schema up to date, then
 # exits. Run on every deploy: it applies only migrations not yet recorded in
 # schema_migrations, so re-running is a no-op.
-FROM node:20-slim
+FROM node:22-slim
 WORKDIR /app
 
 COPY package.json package-lock.json tsconfig.base.json ./

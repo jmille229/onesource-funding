@@ -48,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: 'npm', cache-dependency-path: apps/constructpm/package-lock.json }
+        with: { node-version: '22', cache: 'npm', cache-dependency-path: apps/constructpm/package-lock.json }
       - run: npm ci
 
       # Applies migrations and provisions the RLS-scoped app role, exactly as the
@@ -56,12 +56,27 @@ jobs:
       - name: Run migrations
         run: npm run migrate
 
-      - name: Typecheck (shared + web)
-        run: npm run build -w packages/shared && npm run typecheck -w packages/web
+      # The API build is `tsc` (not `tsc --noCheck`), so this type-checks it too.
+      - name: Typecheck and build
+        run: |
+          npm run build -w packages/shared
+          npm run typecheck -w packages/api
+          npm run typecheck -w packages/web
+          npm run build -w packages/api
 
       # Unit tests plus tenant-isolation tests against the migrated database.
       - name: Test
         run: npm test -w packages/api
+
+      # Always report the audit; fail only on critical. High-and-below are
+      # surfaced without blocking, so an advisory in a transitive package that
+      # isn't reachable here can't wedge the pipeline. See SECURITY.md for the
+      # advisories reviewed and accepted.
+      - name: Dependency audit
+        if: always()
+        run: |
+          npm audit || true
+          npm audit --audit-level=critical
 
   build-images:
     name: Build & publish images

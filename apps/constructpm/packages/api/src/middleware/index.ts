@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
 import pino from 'pino';
-import pinoHttp from 'pino-http';
+import { pinoHttp } from 'pino-http';
 import { z } from 'zod';
 import { RateLimiterRedis, RateLimiterMemory } from 'rate-limiter-flexible';
 import { verifyAccessToken } from '../lib/jwt.js';
