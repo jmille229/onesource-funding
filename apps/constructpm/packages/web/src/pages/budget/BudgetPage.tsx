@@ -126,7 +126,7 @@ export function BudgetPage() {
   };
 
   if (isLoading) return (
-    <div className="p-6 max-w-full mx-auto">
+    <div className="page max-w-full mx-auto">
       <div className="animate-pulse space-y-3">
         <div className="h-8 bg-slate-200 rounded w-1/4" />
         <div className="h-64 bg-slate-200 rounded" />
@@ -137,7 +137,7 @@ export function BudgetPage() {
   const visibleItems = localItems.filter(i => !i._destroy);
 
   return (
-    <div className="p-6 max-w-full mx-auto space-y-4">
+    <div className="page max-w-full mx-auto space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -166,7 +166,7 @@ export function BudgetPage() {
 
       {/* Totals bar */}
       {totals && (
-        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           {[
             { label: 'Budget Cost', value: formatCurrency(totals.ext_cost) },
             { label: 'Budget Price', value: formatCurrency(totals.ext_price) },
@@ -185,7 +185,7 @@ export function BudgetPage() {
       )}
 
       {/* Budget table */}
-      <div className="card overflow-hidden">
+      <div className="card overflow-x-auto">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">

@@ -50,7 +50,7 @@ export function SubcontractsPage() {
   const billedPct = totals.committed ? Math.min(100, (totals.billed / totals.committed) * 100) : 0;
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className="page max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-start gap-4">
         <button onClick={() => navigate(`/jobs/${jobId}`)} className="btn-ghost btn-sm mt-1" aria-label="Back to job">
@@ -58,7 +58,7 @@ export function SubcontractsPage() {
         </button>
         <div className="flex-1">
           <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Subcontractors</p>
-          <h1 className="text-2xl font-bold text-slate-900">Subcontracts &amp; commitments</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Subcontracts &amp; commitments</h1>
         </div>
         <button className="btn-primary btn-sm" onClick={() => setAdding(true)}>
           <Plus className="w-4 h-4" /> Add subcontract
@@ -66,7 +66,7 @@ export function SubcontractsPage() {
       </div>
 
       {/* Commitment summary */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {[
           { label: 'Committed', value: totals.committed, hint: `${subs.length} subcontract${subs.length === 1 ? '' : 's'}` },
           { label: 'Billed', value: totals.billed },
@@ -106,7 +106,7 @@ export function SubcontractsPage() {
           </div>
           <div className="flex items-end gap-6 flex-wrap">
             <div>
-              <p className="text-3xl font-bold text-slate-900">{participation.participation_pct}%</p>
+              <p className="text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums">{participation.participation_pct}%</p>
               <p className="text-xs text-slate-500">
                 {formatCurrency(participation.certified_committed)} of {formatCurrency(participation.total_committed)} committed to certified firms
               </p>
@@ -123,8 +123,8 @@ export function SubcontractsPage() {
       )}
 
       {/* Subcontracts table */}
-      <div className="card overflow-hidden">
-        <table className="w-full">
+      <div className="card overflow-x-auto">
+        <table className="w-full min-w-[40rem]">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
               <th className="table-header">Sub #</th>
@@ -226,7 +226,7 @@ function AddSubcontractModal({ jobId, onClose, onSaved }: { jobId: string; onClo
             <input id="sub-title" className="input" value={form.title} placeholder="e.g. Concrete & flatwork"
               onChange={(e) => setForm({ ...form, title: e.target.value })} />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="label" htmlFor="sub-amt">Contract amount</label>
               <input id="sub-amt" className="input" inputMode="numeric" value={form.contract_amount} placeholder="48000"

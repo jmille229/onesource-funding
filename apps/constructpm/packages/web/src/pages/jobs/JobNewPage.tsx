@@ -81,7 +81,7 @@ export function JobNewPage() {
   };
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div className="page max-w-3xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
         <button onClick={() => navigate('/jobs')} className="btn-ghost btn-sm">
           <ArrowLeft className="w-4 h-4" />
@@ -93,7 +93,7 @@ export function JobNewPage() {
         {/* Basic Info */}
         <div className="card p-5 space-y-4">
           <h3 className="font-semibold text-slate-900 text-sm uppercase tracking-wide text-slate-500">Basic Information</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="label">Job Name *</label>
               <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Downtown Office Renovation" required />
@@ -118,7 +118,7 @@ export function JobNewPage() {
         {/* Contract */}
         <div className="card p-5 space-y-4">
           <h3 className="font-semibold text-slate-500 text-sm uppercase tracking-wide">Contract</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="label">Contract Type</label>
               <select className="input" value={form.contract_type} onChange={e => set('contract_type', e.target.value)}>
@@ -149,7 +149,7 @@ export function JobNewPage() {
         {/* Schedule */}
         <div className="card p-5 space-y-4">
           <h3 className="font-semibold text-slate-500 text-sm uppercase tracking-wide">Schedule</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="label">Start Date</label>
               <input className="input" type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)} />
@@ -164,7 +164,7 @@ export function JobNewPage() {
         {/* Location */}
         <div className="card p-5 space-y-4">
           <h3 className="font-semibold text-slate-500 text-sm uppercase tracking-wide">Project Location</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="label">Street Address</label>
               <input className="input" value={form.address_line1} onChange={e => set('address_line1', e.target.value)} placeholder="123 Main St" />
@@ -173,7 +173,7 @@ export function JobNewPage() {
               <label className="label">City</label>
               <input className="input" value={form.city} onChange={e => set('city', e.target.value)} />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="label">State</label>
                 <select className="input" value={form.state_code} onChange={e => set('state_code', e.target.value)}>
@@ -192,7 +192,7 @@ export function JobNewPage() {
         {/* People */}
         <div className="card p-5 space-y-4">
           <h3 className="font-semibold text-slate-500 text-sm uppercase tracking-wide">People</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="label">Customer / Owner</label>
               <select className="input" value={form.customer_id} onChange={e => set('customer_id', e.target.value)}>
