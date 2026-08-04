@@ -25,8 +25,8 @@ export function JobsPage() {
   const total: number = data?.meta?.total ?? 0;
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="page max-w-7xl mx-auto">
+      <div className="page-header">
         <div>
           <h1>Jobs</h1>
           <p className="text-sm text-slate-500 mt-0.5">{total} total projects</p>
@@ -37,12 +37,12 @@ export function JobsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-3 mb-5">
-        <div className="relative flex-1 max-w-xs">
+      <div className="filter-bar">
+        <div className="relative w-full sm:max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input className="input pl-9" placeholder="Search jobs..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <select className="input w-44" value={status} onChange={e => setStatus(e.target.value)}>
+        <select className="input w-full sm:w-44" value={status} onChange={e => setStatus(e.target.value)}>
           <option value="">All statuses</option>
           {STATUS_OPTIONS.filter(Boolean).map(s => (
             <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
@@ -51,8 +51,8 @@ export function JobsPage() {
       </div>
 
       {/* Table */}
-      <div className="card overflow-hidden">
-        <table className="w-full">
+      <div className="card overflow-x-auto">
+        <table className="w-full min-w-[40rem]">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
               <th className="table-header">Job</th>

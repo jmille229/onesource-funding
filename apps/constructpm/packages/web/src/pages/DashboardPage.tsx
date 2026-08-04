@@ -11,7 +11,7 @@ function StatCard({ label, value, sub, icon: Icon, color }: { label: string; val
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm text-slate-500 font-medium">{label}</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{value}</p>
+          <p className="text-xl sm:text-2xl font-bold text-slate-900 mt-1 tabular-nums">{value}</p>
           {sub && <p className="text-xs text-slate-500 mt-0.5">{sub}</p>}
         </div>
         <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${color}`}>
@@ -58,9 +58,9 @@ export function DashboardPage() {
   const openAR = invStats.reduce((s: number, i: Record<string,unknown>) => s + Number(i['balance_due'] ?? 0), 0);
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="page max-w-7xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Good morning, {user?.first_name} 👋</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Good morning, {user?.first_name} 👋</h1>
         <p className="text-slate-500 mt-0.5">Here's what's happening at Hartwell Construction today</p>
       </div>
 

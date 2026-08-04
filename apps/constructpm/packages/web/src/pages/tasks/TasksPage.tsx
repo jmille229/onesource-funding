@@ -51,7 +51,7 @@ function AddTaskModal({ jobId, onClose, onAdded }: { jobId: string; onClose: () 
             <label className="label">Task Name *</label>
             <input className="input" value={name} onChange={e => setName(e.target.value)} autoFocus required placeholder="e.g. Foundation pour" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="label">Start Date</label>
               <input className="input" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
@@ -121,7 +121,7 @@ export function TasksPage() {
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-5">
+    <div className="page max-w-4xl mx-auto space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -139,7 +139,7 @@ export function TasksPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           { label: 'Total', value: stats.total, onClick: () => setFilter(''), active: filter === '' },
           { label: 'In Progress', value: stats.in_progress, onClick: () => setFilter('in_progress'), active: filter === 'in_progress' },
@@ -152,7 +152,7 @@ export function TasksPage() {
             className={`card p-3 text-left hover:border-brand-300 transition-colors ${active ? 'border-brand-500 ring-1 ring-brand-500' : ''}`}
           >
             <p className="text-xs text-slate-500">{label}</p>
-            <p className="text-2xl font-bold text-slate-900">{value}</p>
+            <p className="text-xl sm:text-2xl font-bold text-slate-900 tabular-nums">{value}</p>
           </button>
         ))}
       </div>

@@ -30,11 +30,11 @@ export function ReportsPage() {
   }, {});
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className="page max-w-7xl mx-auto space-y-6">
       <h1 className="text-xl font-bold text-slate-900">Reports</h1>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: 'Active Jobs', value: statusCounts['active'] ?? 0, icon: FolderKanban, color: 'bg-blue-50 text-blue-600' },
           { label: 'Total Contract Value', value: formatCurrency(fin?.total_contract_value ?? 0), icon: DollarSign, color: 'bg-green-50 text-green-600' },
@@ -45,7 +45,7 @@ export function ReportsPage() {
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm text-slate-500">{label}</p>
-                <p className="text-2xl font-bold text-slate-900 mt-1">{value}</p>
+                <p className="text-xl sm:text-2xl font-bold text-slate-900 mt-1 tabular-nums">{value}</p>
               </div>
               <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${color}`}>
                 <Icon className="w-5 h-5" />
@@ -79,7 +79,7 @@ export function ReportsPage() {
         <div className="grid grid-cols-3 lg:grid-cols-6 gap-4">
           {Object.entries(statusCounts).map(([status, count]) => (
             <div key={status} className="text-center">
-              <p className="text-3xl font-bold text-slate-900">{count}</p>
+              <p className="text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums">{count}</p>
               <p className="text-xs text-slate-500 mt-1 capitalize">{status.replace('_', ' ')}</p>
             </div>
           ))}
@@ -92,7 +92,7 @@ export function ReportsPage() {
           <h3 className="font-semibold text-slate-900">Active Job Cost Summary</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[40rem]">
             <thead className="bg-slate-50">
               <tr>
                 <th className="table-header">Job</th>

@@ -51,11 +51,11 @@ export function JobDetailPage() {
   });
 
   if (isLoading) return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="page max-w-7xl mx-auto">
       <div className="animate-pulse space-y-4">
         <div className="h-8 bg-slate-200 rounded w-1/3" />
         <div className="h-40 bg-slate-200 rounded" />
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[...Array(4)].map((_, i) => <div key={i} className="h-24 bg-slate-200 rounded" />)}
         </div>
       </div>
@@ -63,7 +63,7 @@ export function JobDetailPage() {
   );
 
   if (!jobData) return (
-    <div className="p-6 max-w-7xl mx-auto text-center text-slate-500">Job not found</div>
+    <div className="page max-w-7xl mx-auto text-center text-slate-500">Job not found</div>
   );
 
   const job = jobData;
@@ -76,21 +76,23 @@ export function JobDetailPage() {
   const taskStats = summary?.tasks ?? { total: 0, completed: 0, pct_complete: 0 };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-start gap-4">
+    <div className="page max-w-7xl mx-auto space-y-6">
+      {/* Header — stacks on phones, where three action buttons beside the title
+          pushed themselves off the right edge. */}
+      <div className="flex flex-wrap items-start gap-4">
         <button onClick={() => navigate('/jobs')} className="btn-ghost btn-sm mt-1">
           <ArrowLeft className="w-4 h-4" />
         </button>
-        <div className="flex-1">
-          <div className="flex items-center gap-3 mb-1">
+        {/* min-w-0 so the long job name can shrink instead of forcing the row wide */}
+        <div className="flex-1 min-w-0 basis-64">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
             <span className="text-sm font-mono text-slate-500">{job.job_number}</span>
             <span className={STATUS_COLORS[job.status] ?? 'badge-gray'}>{job.status?.replace('_', ' ')}</span>
             {job.contract_type && (
               <span className="badge badge-gray">{CONTRACT_LABELS[job.contract_type]}</span>
             )}
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">{job.name}</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900">{job.name}</h1>
           <div className="flex items-center gap-4 mt-2 text-sm text-slate-500 flex-wrap">
             {job.customer_name && (
               <span className="flex items-center gap-1"><Building2 className="w-4 h-4" />{job.customer_name}</span>
@@ -106,7 +108,7 @@ export function JobDetailPage() {
             )}
           </div>
         </div>
-        <div className="flex gap-2 flex-shrink-0">
+        <div className="flex gap-2 flex-wrap w-full sm:w-auto sm:flex-shrink-0">
           <Link to={`/jobs/${id}/tasks`} className="btn-secondary btn-sm">
             <ClipboardList className="w-4 h-4" /> Tasks
           </Link>
@@ -120,16 +122,16 @@ export function JobDetailPage() {
       </div>
 
       {/* Financial KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card p-4">
           <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Contract Value</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">
+          <p className="text-xl sm:text-2xl font-bold text-slate-900 mt-1 tabular-nums">
             {job.contract_amount ? formatCurrency(job.contract_amount) : '—'}
           </p>
         </div>
         <div className="card p-4">
           <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Budget Cost</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">
+          <p className="text-xl sm:text-2xl font-bold text-slate-900 mt-1 tabular-nums">
             {fin ? formatCurrency(fin.budget_cost) : '—'}
           </p>
           {fin?.budget_price && (
@@ -140,7 +142,7 @@ export function JobDetailPage() {
         </div>
         <div className="card p-4">
           <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Actual Cost</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">
+          <p className="text-xl sm:text-2xl font-bold text-slate-900 mt-1 tabular-nums">
             {fin ? formatCurrency(fin.actual) : '—'}
           </p>
           {fin?.budget_cost > 0 && (
@@ -151,7 +153,7 @@ export function JobDetailPage() {
         </div>
         <div className="card p-4">
           <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Invoiced</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">
+          <p className="text-xl sm:text-2xl font-bold text-slate-900 mt-1 tabular-nums">
             {fin ? formatCurrency(fin.invoiced) : '—'}
           </p>
           {job.retainage_held > 0 && (
@@ -246,7 +248,7 @@ export function JobDetailPage() {
       {/* Job Details */}
       <div className="card p-4">
         <h3 className="font-semibold text-slate-900 mb-3 text-sm">Job Details</h3>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
           <div>
             <p className="text-xs text-slate-500 mb-0.5">Contract Type</p>
             <p className="font-medium">{CONTRACT_LABELS[job.contract_type] ?? '—'}</p>

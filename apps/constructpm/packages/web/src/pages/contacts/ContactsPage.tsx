@@ -55,7 +55,7 @@ function ContactModal({ contact, onClose }: { contact?: Record<string, unknown> 
       <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="p-6 border-b"><h3 className="text-lg font-semibold">{isEdit ? 'Edit' : 'New'} Contact</h3></div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="label">Name *</label>
               <input className="input" value={form.name} onChange={e => set('name', e.target.value)} required autoFocus />
@@ -82,7 +82,7 @@ function ContactModal({ contact, onClose }: { contact?: Record<string, unknown> 
               <label className="label">City</label>
               <input className="input" value={form.city} onChange={e => set('city', e.target.value)} />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="label">State</label>
                 <select className="input" value={form.state_code} onChange={e => set('state_code', e.target.value)}>
@@ -131,7 +131,7 @@ export function ContactsPage() {
   const contacts: Record<string, unknown>[] = Array.isArray(data) ? data : [];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-5">
+    <div className="page max-w-7xl mx-auto space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-slate-900">Contacts</h1>
         <button onClick={() => { setEditContact(null); setShowModal(true); }} className="btn-primary btn-sm">
@@ -140,11 +140,11 @@ export function ContactsPage() {
       </div>
 
       <div className="flex gap-3">
-        <div className="relative flex-1 max-w-xs">
+        <div className="relative w-full sm:max-w-xs">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input className="input pl-9" placeholder="Search contacts..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <select className="input w-40" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+        <select className="input w-full sm:w-40" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
           <option value="">All types</option>
           {['customer','vendor','subcontractor','both'].map(t => <option key={t} value={t}>{t}</option>)}
         </select>

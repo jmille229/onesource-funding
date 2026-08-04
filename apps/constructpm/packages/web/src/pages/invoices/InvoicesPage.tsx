@@ -68,7 +68,7 @@ function NewInvoiceModal({ onClose }: { onClose: () => void }) {
           <h3 className="text-lg font-semibold">New Invoice</h3>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="label">Job *</label>
               <select className="input" value={form.job_id} onChange={e => setForm(f => ({ ...f, job_id: e.target.value }))} required>
@@ -103,7 +103,7 @@ function NewInvoiceModal({ onClose }: { onClose: () => void }) {
             </div>
             <div className="space-y-2">
               {form.items.map((item, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                <div key={i} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
                   <input className="input col-span-6 text-sm" value={item.description} onChange={e => updateItem(i, 'description', e.target.value)} placeholder="Description" />
                   <input className="input col-span-2 text-sm text-right" type="number" min="0" step="0.01" value={item.quantity} onChange={e => updateItem(i, 'quantity', e.target.value)} placeholder="Qty" />
                   <input className="input col-span-3 text-sm text-right" type="number" min="0" step="0.01" value={item.unit_price} onChange={e => updateItem(i, 'unit_price', e.target.value)} placeholder="Unit $" />
@@ -175,7 +175,7 @@ export function InvoicesPage() {
     .reduce((s, i) => s + Number(i['balance_due'] ?? 0), 0);
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-5">
+    <div className="page max-w-7xl mx-auto space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Invoices</h1>
@@ -190,7 +190,7 @@ export function InvoicesPage() {
 
       {/* Filters */}
       <div className="flex gap-3">
-        <div className="relative flex-1 max-w-xs">
+        <div className="relative w-full sm:max-w-xs">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input className="input pl-9" placeholder="Search invoices..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
@@ -203,8 +203,8 @@ export function InvoicesPage() {
       </div>
 
       {/* Table */}
-      <div className="card overflow-hidden">
-        <table className="w-full">
+      <div className="card overflow-x-auto">
+        <table className="w-full min-w-[40rem]">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
               <th className="table-header">Invoice #</th>
