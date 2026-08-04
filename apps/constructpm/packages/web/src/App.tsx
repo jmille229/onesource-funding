@@ -16,6 +16,8 @@ import { TasksPage } from './pages/tasks/TasksPage';
 import { InvoicesPage } from './pages/invoices/InvoicesPage';
 import { ContactsPage } from './pages/contacts/ContactsPage';
 import { ReportsPage } from './pages/reports/ReportsPage';
+import { FactoringPage } from './pages/factoring/FactoringPage';
+import { AdminConsolePage } from './pages/admin/AdminConsolePage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -54,6 +56,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/admin" element={<AdminConsolePage />} />
           <Route
             path="/"
             element={
@@ -73,6 +76,7 @@ export default function App() {
             <Route path="invoices" element={<InvoicesPage />} />
             <Route path="contacts" element={<ContactsPage />} />
             <Route path="reports" element={<ReportsPage />} />
+            <Route path="funding" element={<FactoringPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

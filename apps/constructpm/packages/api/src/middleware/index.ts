@@ -4,7 +4,7 @@ import pino from 'pino';
 import { pinoHttp } from 'pino-http';
 import { z } from 'zod';
 import { RateLimiterRedis, RateLimiterMemory } from 'rate-limiter-flexible';
-import { verifyAccessToken } from '../lib/jwt.js';
+import { verifyAccessToken, verifyPlatformToken } from '../lib/jwt.js';
 import { redis } from '../lib/redis.js';
 import type { AuthContext, UserRole } from '@constructpm/shared';
 
@@ -195,4 +195,34 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
 // ─── 404 handler ─────────────────────────────────────────────────────────────
 export function notFound(req: Request, res: Response) {
   res.status(404).json({ error: 'not_found', message: `${req.method} ${req.path} not found` });
+}
+
+// ─── Operator authentication ──────────────────────────────────────────────────
+// SECURITY: verifyPlatformToken demands the admin audience, so a tenant token
+// fails here outright — operator access is a different credential, not a tenant
+// credential with a flag. Nothing about req.auth (the tenant context) is set by
+// this middleware, so tenant-scoped helpers cannot be driven by an operator token.
+declare global {
+  namespace Express {
+    interface Request {
+      platform: { userId: string; email: string };
+    }
+  }
+}
+
+export function authenticatePlatform(req: Request, res: Response, next: NextFunction) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'unauthorized', message: 'Missing bearer token' });
+    return;
+  }
+  try {
+    const payload = verifyPlatformToken(header.slice(7));
+    req.platform = { userId: payload.sub, email: payload.email };
+    next();
+  } catch {
+    // Deliberately opaque: don't tell an attacker whether the token was the wrong
+    // audience, expired, or malformed.
+    res.status(401).json({ error: 'unauthorized', message: 'Invalid token' });
+  }
 }

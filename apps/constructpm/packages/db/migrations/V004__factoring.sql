@@ -371,3 +371,16 @@ GRANT EXECUTE ON FUNCTION factoring_accrued_fee(UUID, DATE)
 GRANT SELECT (id, name, slug) ON companies TO constructpm_factoring_admin;
 GRANT SELECT (id, company_id, job_id, invoice_number, total, balance_due, issue_date, due_date, status)
   ON invoices TO constructpm_factoring_admin;
+
+-- Column grants alone are not sufficient. Both tables have FORCE RLS with
+-- policies naming only constructpm_app, so without a policy for the operator
+-- role every join against them returns zero rows — silently, which is the
+-- dangerous part: the console would show an empty book rather than an error.
+-- SELECT only, and the column grants above still bound what is readable.
+DROP POLICY IF EXISTS companies_factoring_admin_read ON companies;
+CREATE POLICY companies_factoring_admin_read ON companies
+  FOR SELECT TO constructpm_factoring_admin USING (true);
+
+DROP POLICY IF EXISTS invoices_factoring_admin_read ON invoices;
+CREATE POLICY invoices_factoring_admin_read ON invoices
+  FOR SELECT TO constructpm_factoring_admin USING (true);

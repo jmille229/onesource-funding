@@ -62,3 +62,44 @@ export function verifyAccessToken(token: string): JwtPayload {
 
   return payload;
 }
+
+// ─── Operator (platform) tokens ───────────────────────────────────────────────
+// SECURITY: A distinct audience is the whole point. `verifyAccessToken` demands
+// env.JWT_AUDIENCE and `verifyPlatformToken` demands env.JWT_ADMIN_AUDIENCE, so
+// a tenant token presented to an admin route fails verification outright rather
+// than relying on a role check somewhere up the stack. Operator sessions are
+// also deliberately short — this credential reaches across every tenant.
+export interface PlatformJwtPayload {
+  sub: string;
+  email: string;
+  jti: string;
+  iss: string;
+  aud: string;
+  iat: number;
+  exp: number;
+}
+
+export function signPlatformToken(payload: { userId: string; email: string }): string {
+  const iat = Math.floor(Date.now() / 1000);
+  return jwt.sign(
+    {
+      sub: payload.userId,
+      email: payload.email,
+      jti: randomUUID(),
+      iss: env.JWT_ISSUER,
+      aud: env.JWT_ADMIN_AUDIENCE,
+      iat,
+      exp: iat + 60 * 60,   // 1 hour
+    } satisfies PlatformJwtPayload,
+    SIGN_KEY,
+    { algorithm: ALGORITHM as jwt.Algorithm }
+  );
+}
+
+export function verifyPlatformToken(token: string): PlatformJwtPayload {
+  return jwt.verify(token, VERIFY_KEY, {
+    algorithms: [ALGORITHM as jwt.Algorithm],
+    issuer: env.JWT_ISSUER,
+    audience: env.JWT_ADMIN_AUDIENCE,
+  }) as PlatformJwtPayload;
+}
