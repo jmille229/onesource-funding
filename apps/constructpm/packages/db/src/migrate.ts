@@ -107,6 +107,25 @@ async function runMigrations(): Promise<void> {
         throw new Error('constructpm_app role missing — did V002 run?');
       }
     }
+
+    // The factoring operator role. V004 creates it NOLOGIN; it only becomes
+    // usable once a password is configured, so a deployment that doesn't run the
+    // admin console never has a live cross-tenant credential at all.
+    const adminPassword = process.env['FACTORING_ADMIN_PASSWORD'];
+    if (adminPassword) {
+      const exists = await client.query(
+        `SELECT 1 FROM pg_roles WHERE rolname = 'constructpm_factoring_admin'`);
+      if (exists.rowCount) {
+        const stmt = await client.query<{ sql: string }>(
+          `SELECT format('ALTER ROLE constructpm_factoring_admin WITH LOGIN PASSWORD %L', $1::text) AS sql`,
+          [adminPassword]
+        );
+        await client.query(stmt.rows[0]!.sql);
+        console.log('  ✓ constructpm_factoring_admin credentials set');
+      } else {
+        throw new Error('constructpm_factoring_admin role missing — did V004 run?');
+      }
+    }
   } finally {
     await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]).catch(() => {});
     client.release();

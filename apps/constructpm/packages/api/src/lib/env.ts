@@ -86,6 +86,15 @@ const envSchema = z.object({
   DATABASE_SSL: zBool(false),
   DATABASE_SSL_CA: z.string().optional(),  // PEM content of the CA cert
 
+  // ─── Factoring operator console ────────────────────────────────────────────
+  // Connection for the constructpm_factoring_admin role. When unset, the admin
+  // routes are not mounted at all — a deployment that doesn't operate factoring
+  // never exposes a cross-tenant surface, and never holds the credential.
+  ADMIN_DATABASE_URL: z.string().optional(),
+  // Operator tokens carry a different audience from tenant tokens, so a tenant
+  // token can never be replayed against an admin route (and vice versa).
+  JWT_ADMIN_AUDIENCE: z.string().default('constructpm-admin'),
+
   // Feature flags
   SKIP_VIRUS_SCAN: zBool(false),
 

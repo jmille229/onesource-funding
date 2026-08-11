@@ -43,8 +43,13 @@ jobs:
     env:
       MIGRATION_DATABASE_URL: postgresql://constructpm:ci_postgres_pw@localhost:5432/constructpm_test
       CONSTRUCTPM_APP_PASSWORD: ci_app_pw
+      # Gives constructpm_factoring_admin LOGIN, so the operator-side boundary
+      # tests actually run here. Without it the role is NOLOGIN and those tests
+      # fail on connection rather than on the property they assert.
+      FACTORING_ADMIN_PASSWORD: ci_admin_pw
       TEST_DATABASE_URL: postgresql://constructpm:ci_postgres_pw@localhost:5432/constructpm_test
       TEST_APP_DATABASE_URL: postgresql://constructpm_app:ci_app_pw@localhost:5432/constructpm_test
+      TEST_ADMIN_DATABASE_URL: postgresql://constructpm_factoring_admin:ci_admin_pw@localhost:5432/constructpm_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

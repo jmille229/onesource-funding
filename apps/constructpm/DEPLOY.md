@@ -148,6 +148,37 @@ start until it succeeds. Adding a migration means dropping a new
 IMAGE_TAG=a1b2c3d ./infra/deploy.sh
 ```
 
+### Turning on the factoring console
+
+The operator console is off unless you configure it, so a deployment that doesn't
+run factoring holds no cross-tenant credential at all.
+
+1. Add a password to `.env.production` — this gives the `constructpm_factoring_admin`
+   database role a login:
+
+```bash
+echo "FACTORING_ADMIN_PASSWORD=$(openssl rand -hex 24)" >> .env.production
+```
+
+2. Redeploy so the migration applies it and the API mounts `/api/admin`:
+
+```bash
+./infra/deploy.sh
+```
+
+3. Create an operator account. There is no self-registration for operators —
+   these accounts reach factoring data across every client, so they are
+   provisioned by hand:
+
+```bash
+./infra/create-operator.sh ops@os-funding.com "Jane Doe"
+```
+
+Sign in at `https://app.os-funding.com/admin`. Operator credentials are entirely
+separate from client logins: different table, different token audience, and a
+database role that can reach the factoring tables and nothing else — not jobs,
+budgets, daily logs or subcontracts.
+
 ### Backups
 
 ```bash

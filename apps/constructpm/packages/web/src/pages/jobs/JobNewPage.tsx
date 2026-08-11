@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ContactPicker } from '../../components/ContactPicker';
 import { api } from '../../lib/api';
 import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
@@ -193,15 +194,12 @@ export function JobNewPage() {
         <div className="card p-5 space-y-4">
           <h3 className="font-semibold text-slate-500 text-sm uppercase tracking-wide">People</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="label">Customer / Owner</label>
-              <select className="input" value={form.customer_id} onChange={e => set('customer_id', e.target.value)}>
-                <option value="">— Select customer —</option>
-                {customers.map((c: Record<string, string>) => (
-                  <option key={c['id']} value={c['id']}>{c['name']}</option>
-                ))}
-              </select>
-            </div>
+            <ContactPicker
+              id="job_customer"
+              label="Customer / Owner"
+              value={form.customer_id}
+              onChange={(id) => set('customer_id', id)}
+            />
             <div>
               <label className="label">Project Manager</label>
               <select className="input" value={form.project_manager_id} onChange={e => set('project_manager_id', e.target.value)}>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, FolderKanban, FileText, Users, BarChart3,
-  LogOut, HardHat, Menu, X,
+  LogOut, HardHat, Menu, X, Banknote,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth.store';
 import { clsx } from 'clsx';
@@ -13,6 +13,10 @@ const nav = [
   { to: '/invoices',  icon: FileText,        label: 'Invoices' },
   { to: '/contacts',  icon: Users,           label: 'Contacts' },
   { to: '/reports',   icon: BarChart3,       label: 'Reports' },
+  // Funding shows the company's factoring position, so it is limited to the
+  // finance-facing roles. The API enforces the same set independently.
+  { to: '/funding',   icon: Banknote,        label: 'Funding',
+    roles: ['owner', 'admin', 'accountant'] },
 ];
 
 /** Sidebar contents — identical in the fixed desktop rail and the mobile drawer. */
@@ -29,7 +33,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        {nav.map(({ to, icon: Icon, label }) => (
+        {nav
+          .filter((item) => !item.roles || (user?.role && item.roles.includes(user.role)))
+          .map(({ to, icon: Icon, label }) => (
           <NavLink
             key={to}
             to={to}

@@ -66,6 +66,9 @@ services:
       NODE_ENV: production
       MIGRATION_DATABASE_URL: postgresql://constructpm:${POSTGRES_PASSWORD}@postgres:5432/constructpm
       CONSTRUCTPM_APP_PASSWORD: ${CONSTRUCTPM_APP_PASSWORD:?set CONSTRUCTPM_APP_PASSWORD in .env.production}
+      # Optional. Set only if you operate the factoring console; the migration
+      # gives the operator role LOGIN when this is present.
+      FACTORING_ADMIN_PASSWORD: ${FACTORING_ADMIN_PASSWORD:-}
     logging: *default-logging
     networks: [constructpm]
 
@@ -142,6 +145,9 @@ services:
       # Postgres is on a private Docker network with no TLS listener. Set true only
       # for managed Postgres reached over the internet.
       DATABASE_SSL: "false"
+      # Cross-tenant connection for the factoring console. Leave blank and the
+      # admin routes are not mounted, so no cross-tenant credential exists.
+      ADMIN_DATABASE_URL: ${FACTORING_ADMIN_PASSWORD:+postgresql://constructpm_factoring_admin:${FACTORING_ADMIN_PASSWORD}@postgres:5432/constructpm}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (>=64 chars) in .env.production}

@@ -31,6 +31,9 @@ import { timeTrackingRouter }  from './modules/time-tracking/time-tracking.route
 import { filesRouter }         from './modules/files/files.router.js';
 import { reportsRouter }       from './modules/reports/reports.router.js';
 import { settingsRouter }      from './modules/settings/settings.router.js';
+import { factoringRouter }     from './modules/factoring/factoring.router.js';
+import { adminRouter }         from './modules/admin/admin.router.js';
+import { adminEnabled }        from './lib/admin-db.js';
 
 const app = express();
 
@@ -89,6 +92,19 @@ app.get('/health/ready', async (_req, res) => {
 // ─── Public routes ────────────────────────────────────────────────────────────
 app.use('/api/auth', authRouter);
 
+// ─── Operator console ─────────────────────────────────────────────────────────
+// Mounted before the tenant guard: operator tokens carry a different audience
+// and must not be run through tenant authentication. Only mounted when an
+// admin database connection is configured, so a deployment that doesn't
+// operate factoring exposes no cross-tenant surface at all.
+if (adminEnabled) {
+  app.use('/api/admin', adminRouter);
+} else {
+  app.use('/api/admin', (_req, res) => {
+    res.status(503).json({ error: 'not_configured', message: 'Factoring console is not enabled' });
+  });
+}
+
 // ─── Protected routes (JWT required for all /api/* beyond auth) ───────────────
 // NOTE: tenantRateLimit is applied globally here — this covers /api/files/* as well.
 // File-specific rate limiting is handled by the concurrency gate inside files.router.ts
@@ -108,6 +124,7 @@ app.use('/api/time',            timeTrackingRouter);
 app.use('/api/files',           filesRouter);
 app.use('/api/reports',         reportsRouter);
 app.use('/api/settings',        settingsRouter);
+app.use('/api/factoring',       factoringRouter);
 
 app.use(notFound);
 app.use(errorHandler);
