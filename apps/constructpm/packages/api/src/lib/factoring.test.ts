@@ -171,3 +171,125 @@ describe.runIf(enabled)('factoring', () => {
       .rejects.toThrow(/factored_split_ck/i);
   });
 });
+
+/**
+ * Funding requests are the first factoring rows a tenant may write. These assert
+ * the narrowness of that write surface — a client can ask, and withdraw, and
+ * nothing else.
+ */
+describe.runIf(enabled)('funding requests', () => {
+  const REQ_CO = 'f3333333-3333-3333-3333-333333333333';
+  let ownerPool: pg.Pool;
+  let tenantPool: pg.Pool;
+  let invoiceId: string;
+  let requestId: string;
+
+  beforeAll(async () => {
+    ownerPool = new pg.Pool({ connectionString: OWNER_URL });
+    tenantPool = new pg.Pool({ connectionString: APP_URL });
+    await ownerPool.query(
+      `INSERT INTO companies (id,name,slug) VALUES ($1,'Request Co','request-co')
+       ON CONFLICT (id) DO NOTHING`, [REQ_CO]);
+    const u = await ownerPool.query<{ id: string }>(
+      `INSERT INTO users (company_id,email,password_hash,first_name,last_name,role)
+       VALUES ($1,'req@test.com','x','R','C','owner') RETURNING id`, [REQ_CO]);
+    const j = await ownerPool.query<{ id: string }>(
+      `INSERT INTO jobs (company_id,job_number,name,status,created_by)
+       VALUES ($1,'R-1','Req Job','active',$2) RETURNING id`, [REQ_CO, u.rows[0]!.id]);
+    const ct = await ownerPool.query<{ id: string }>(
+      `INSERT INTO contacts (company_id,name,type) VALUES ($1,'Debtor Co','customer') RETURNING id`,
+      [REQ_CO]);
+    const inv = await ownerPool.query<{ id: string }>(
+      `INSERT INTO invoices (company_id,job_id,customer_id,invoice_number,due_date,total,created_by)
+       VALUES ($1,$2,$3,'REQ-INV-1',CURRENT_DATE+30,50000,$4) RETURNING id`,
+      [REQ_CO, j.rows[0]!.id, ct.rows[0]!.id, u.rows[0]!.id]);
+    invoiceId = inv.rows[0]!.id;
+    const r = await ownerPool.query<{ id: string }>(
+      `INSERT INTO funding_requests (company_id,invoice_id,requested_amount,invoice_number,requested_by)
+       VALUES ($1,$2,50000,'REQ-INV-1',$3) RETURNING id`, [REQ_CO, invoiceId, u.rows[0]!.id]);
+    requestId = r.rows[0]!.id;
+  });
+
+  afterAll(async () => {
+    await ownerPool?.query('DELETE FROM companies WHERE id=$1', [REQ_CO]).catch(() => {});
+    await ownerPool?.end().catch(() => {});
+    await tenantPool?.end().catch(() => {});
+  });
+
+  async function asReqTenant(sql: string, params: unknown[] = []) {
+    const c = await tenantPool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SELECT set_config($1,$2,true)', ['app.company_id', REQ_CO]);
+      const r = await c.query(sql, params);
+      await c.query('COMMIT');
+      return r;
+    } catch (e) {
+      await c.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally { c.release(); }
+  }
+
+  it('lets a client read its own requests', async () => {
+    const r = await asReqTenant('SELECT invoice_number FROM funding_requests');
+    expect(r.rows).toHaveLength(1);
+  });
+
+  it('lets a client withdraw a pending request', async () => {
+    const r = await asReqTenant(
+      `UPDATE funding_requests SET status='withdrawn' WHERE id=$1 RETURNING status`, [requestId]);
+    expect(r.rows[0]!['status']).toBe('withdrawn');
+    await ownerPool.query(`UPDATE funding_requests SET status='submitted' WHERE id=$1`, [requestId]);
+  });
+
+  // The whole point of a request being distinct from an advance.
+  it('refuses to let a client approve its own request', async () => {
+    await expect(asReqTenant(
+      `UPDATE funding_requests SET status='approved' WHERE id=$1`, [requestId]))
+      .rejects.toThrow(/row-level security/i);
+  });
+
+  it('refuses to let a client change the requested amount', async () => {
+    // Column-level grant: only `status` is updatable, so this fails on privilege.
+    await expect(asReqTenant(
+      `UPDATE funding_requests SET requested_amount=999999 WHERE id=$1`, [requestId]))
+      .rejects.toThrow(/permission denied/i);
+  });
+
+  it('refuses to let a client delete a request', async () => {
+    await expect(asReqTenant(`DELETE FROM funding_requests WHERE id=$1`, [requestId]))
+      .rejects.toThrow(/permission denied/i);
+  });
+
+  it('still refuses any write to the funded book', async () => {
+    await expect(asReqTenant(
+      `INSERT INTO factored_invoices (company_id,factoring_client_id,debtor_id,debtor_name,
+        invoice_number,face_amount,advance_rate_pct,recourse_days,advance_amount,reserve_amount,
+        status,advanced_on) VALUES ($1,$1,$1,'x','y',1,80,90,1,0,'advanced',CURRENT_DATE)`, [REQ_CO]))
+      .rejects.toThrow(/permission denied/i);
+  });
+
+  it('limits the operator to funding-request documents, not the whole file store', async () => {
+    const u = await ownerPool.query<{ id: string }>(
+      `SELECT id FROM users WHERE company_id=$1 LIMIT 1`, [REQ_CO]);
+    await ownerPool.query(
+      `INSERT INTO file_attachments (company_id,entity_type,entity_id,original_name,storage_key,
+         content_type,size_bytes,uploaded_by)
+       VALUES ($1,'funding_request',$2,'invoice-copy.pdf','k1','application/pdf',10,$3),
+              ($1,'job',$2,'site-photo.jpg','k2','image/jpeg',10,$3)`,
+      [REQ_CO, requestId, u.rows[0]!.id]);
+
+    // Read as the operator role via its own connection.
+    const admin = new pg.Pool({
+      connectionString: (OWNER_URL as string).replace(
+        /\/\/[^@]*@/, '//constructpm_factoring_admin:adminpw@'),
+    });
+    try {
+      const r = await admin.query<{ original_name: string }>(
+        `SELECT original_name FROM file_attachments WHERE company_id=$1`, [REQ_CO]);
+      expect(r.rows.map((x) => x.original_name)).toEqual(['invoice-copy.pdf']);
+    } finally {
+      await admin.end().catch(() => {});
+    }
+  });
+});

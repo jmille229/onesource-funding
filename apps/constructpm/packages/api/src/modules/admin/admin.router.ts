@@ -480,3 +480,115 @@ adminRouter.get('/audit', asyncHandler(async (_req, res) => {
      ORDER BY a.occurred_at DESC LIMIT 200`);
   res.json({ data: r.rows });
 }));
+
+// ─── Requests ─────────────────────────────────────────────────────────────────
+/** Pending counts, for the console badge. */
+adminRouter.get('/requests/counts', asyncHandler(async (_req, res) => {
+  const r = await pool().query<{ funding: string; onboarding: string }>(`
+    SELECT (SELECT COUNT(*) FROM funding_requests WHERE status IN ('submitted','under_review')) AS funding,
+           (SELECT COUNT(*) FROM factoring_onboarding_requests WHERE status IN ('submitted','contacted')) AS onboarding`);
+  res.json({ data: r.rows[0] });
+}));
+
+adminRouter.get('/requests', asyncHandler(async (_req, res) => {
+  const r = await pool().query(`
+    SELECT fr.*, c.name AS company_name,
+           (SELECT COUNT(*) FROM file_attachments fa
+             WHERE fa.entity_type = 'funding_request' AND fa.entity_id = fr.id) AS document_count
+      FROM funding_requests fr
+      JOIN companies c ON c.id = fr.company_id
+     ORDER BY CASE WHEN fr.status IN ('submitted','under_review') THEN 0 ELSE 1 END,
+              fr.requested_at DESC`);
+  res.json({ data: r.rows });
+}));
+
+adminRouter.get('/onboarding-requests', asyncHandler(async (_req, res) => {
+  const r = await pool().query(`
+    SELECT o.*, c.name AS company_name
+      FROM factoring_onboarding_requests o
+      JOIN companies c ON c.id = o.company_id
+     ORDER BY CASE WHEN o.status IN ('submitted','contacted') THEN 0 ELSE 1 END, o.created_at DESC`);
+  res.json({ data: r.rows });
+}));
+
+/**
+ * Approve a request by funding it. Terms are chosen here — the debtor in
+ * particular, because the client's "customer" is a tenant-scoped contact while
+ * exposure is tracked against a platform-level debtor, and only an operator can
+ * make that mapping.
+ */
+adminRouter.post(
+  '/requests/:id/approve',
+  validate(z.object({
+    debtor_id: z.string().uuid(),
+    advanced_on: z.string(),
+    invoice_due_on: z.string().nullable().optional(),
+    fee_schedule_id: z.string().uuid().nullable().optional(),
+    face_amount: z.number().positive().nullable().optional(),
+  })),
+  asyncHandler(async (req, res) => {
+    const b = req.body as Record<string, unknown>;
+    const out = await withAdminTransaction(async (c) => {
+      const fr = await c.query<Record<string, string>>(
+        `SELECT * FROM funding_requests WHERE id = $1 FOR UPDATE`, [req.params['id']]);
+      if (!fr.rows[0]) throw Object.assign(new Error('request not found'), { status: 404 });
+      if (!['submitted', 'under_review'].includes(fr.rows[0]['status']!)) {
+        throw Object.assign(new Error('request is not pending'), { status: 422 });
+      }
+
+      const funded = await fundInvoice(c, {
+        company_id: fr.rows[0]['company_id']!,
+        debtor_id: String(b['debtor_id']),
+        invoice_number: fr.rows[0]['invoice_number'] ?? 'UNKNOWN',
+        face_amount: Number(b['face_amount'] ?? fr.rows[0]['requested_amount']),
+        advanced_on: String(b['advanced_on']),
+        invoice_due_on: (b['invoice_due_on'] as string | null) ?? null,
+        fee_schedule_id: (b['fee_schedule_id'] as string | null) ?? null,
+        invoice_id: fr.rows[0]['invoice_id'] ?? null,
+        job_id: null,
+        notes: `Funded from request ${req.params['id']}`,
+      }, req.platform.userId, req.ip ?? null);
+
+      const updated = await c.query(
+        `UPDATE funding_requests
+            SET status = 'approved', reviewed_at = NOW(), factored_invoice_id = $2, updated_at = NOW()
+          WHERE id = $1 RETURNING *`,
+        [req.params['id'], funded!['id']]);
+
+      await audit(c, {
+        platformUserId: req.platform.userId, action: 'approve_request',
+        entityType: 'funding_request', entityId: String(req.params['id']),
+        companyId: fr.rows[0]['company_id'], before: fr.rows[0], after: updated.rows[0],
+        ip: req.ip ?? null,
+      });
+      return { request: updated.rows[0], advance: funded };
+    });
+    res.json({ data: out });
+  })
+);
+
+adminRouter.post(
+  '/requests/:id/decline',
+  validate(z.object({ reason: z.string().min(1).max(500) })),
+  asyncHandler(async (req, res) => {
+    const reason = (req.body as { reason: string }).reason;
+    const row = await withAdminTransaction(async (c) => {
+      const before = await c.query(`SELECT * FROM funding_requests WHERE id=$1`, [req.params['id']]);
+      if (!before.rows[0]) throw Object.assign(new Error('not found'), { status: 404 });
+      const r = await c.query(
+        `UPDATE funding_requests
+            SET status='declined', decline_reason=$2, reviewed_at=NOW(), updated_at=NOW()
+          WHERE id=$1 AND status IN ('submitted','under_review') RETURNING *`,
+        [req.params['id'], reason]);
+      if (!r.rows[0]) throw Object.assign(new Error('request is not pending'), { status: 422 });
+      await audit(c, {
+        platformUserId: req.platform.userId, action: 'decline_request',
+        entityType: 'funding_request', entityId: String(req.params['id']),
+        companyId: String(before.rows[0]['company_id']), before: before.rows[0], after: r.rows[0],
+        ip: req.ip ?? null,
+      });
+      return r.rows[0];
+    });
+    res.json({ data: row });
+  })
+);

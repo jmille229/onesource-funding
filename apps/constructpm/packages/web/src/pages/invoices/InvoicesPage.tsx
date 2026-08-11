@@ -1,6 +1,15 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, FileText, DollarSign, Loader2, Search, CheckCircle } from 'lucide-react';
+import { Plus, FileText, DollarSign, Loader2, Search, CheckCircle, Banknote } from 'lucide-react';
+import { ContactPicker } from '../../components/ContactPicker';
+import { RequestFundingModal } from '../../components/RequestFundingModal';
+
+// A request is a request, not an advance — the wording stays deliberately
+// non-committal until OneSource actually funds it.
+const FUNDING_BADGE: Record<string, string> = {
+  submitted: 'badge-blue', under_review: 'badge-yellow', approved: 'badge-green',
+  declined: 'badge-red', withdrawn: 'badge-gray',
+};
 import { api, formatCurrency, formatDate } from '../../lib/api';
 import { toast } from 'sonner';
 
@@ -76,13 +85,13 @@ function NewInvoiceModal({ onClose }: { onClose: () => void }) {
                 {jobs.map((j: Record<string, string>) => <option key={j['id']} value={j['id']}>{j['job_number']} — {j['name']}</option>)}
               </select>
             </div>
-            <div>
-              <label className="label">Bill To *</label>
-              <select className="input" value={form.customer_id} onChange={e => setForm(f => ({ ...f, customer_id: e.target.value }))} required>
-                <option value="">— Select Customer —</option>
-                {contacts.map((c: Record<string, string>) => <option key={c['id']} value={c['id']}>{c['name']}</option>)}
-              </select>
-            </div>
+            <ContactPicker
+              id="invoice_customer"
+              label="Bill To *"
+              required
+              value={form.customer_id}
+              onChange={(id) => setForm(f => ({ ...f, customer_id: id }))}
+            />
             <div>
               <label className="label">Due Date</label>
               <input className="input" type="date" value={form.due_date || defaultDue} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
@@ -141,6 +150,21 @@ function NewInvoiceModal({ onClose }: { onClose: () => void }) {
 }
 
 export function InvoicesPage() {
+  const [fundingFor, setFundingFor] = useState<
+    { id: string; invoice_number: string; total: number } | null>(null);
+
+  // Which invoices already have a request against them, so the row shows status
+  // instead of offering to request again. Finance-only endpoint, so a 403 for
+  // other roles is expected and simply yields no badges.
+  const { data: fundingRequests } = useQuery({
+    queryKey: ['factoring-requests'],
+    queryFn: () => api.get('/factoring/requests').then(r => r.data.data).catch(() => []),
+  });
+  const fundingByInvoice: Record<string, string> = Object.fromEntries(
+    (fundingRequests ?? [])
+      .filter((r: Record<string, string>) => r['status'] !== 'withdrawn')
+      .map((r: Record<string, string>) => [r['invoice_id'], r['status']])
+  );
   const qc = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [search, setSearch] = useState('');
@@ -215,15 +239,16 @@ export function InvoicesPage() {
               <th className="table-header text-right">Total</th>
               <th className="table-header text-right">Balance</th>
               <th className="table-header">Status</th>
+              <th className="table-header">Funding</th>
               <th className="table-header" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {isLoading ? (
-              <tr><td colSpan={9} className="table-cell text-center py-8 text-slate-400">Loading...</td></tr>
+              <tr><td colSpan={10} className="table-cell text-center py-8 text-slate-400">Loading...</td></tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={9} className="py-12 text-center">
+                <td colSpan={10} className="py-12 text-center">
                   <FileText className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                   <p className="text-slate-500">No invoices yet</p>
                 </td>
@@ -242,6 +267,20 @@ export function InvoicesPage() {
                     <span className={STATUS_COLORS[inv['status'] as string] ?? 'badge-gray'}>
                       {(inv['status'] as string)?.replace('_', ' ')}
                     </span>
+                  </td>
+                  <td className="table-cell">
+                    {fundingByInvoice[inv['id'] as string]
+                      ? <span className={FUNDING_BADGE[fundingByInvoice[inv['id'] as string]!] ?? 'badge-gray'}>
+                          {fundingByInvoice[inv['id'] as string]!.replace('_', ' ')}
+                        </span>
+                      : <button className="btn-secondary btn-sm"
+                                onClick={() => setFundingFor({
+                                  id: inv['id'] as string,
+                                  invoice_number: inv['invoice_number'] as string,
+                                  total: inv['total'] as number,
+                                })}>
+                          <Banknote className="w-3.5 h-3.5" /> Factor
+                        </button>}
                   </td>
                   <td className="table-cell">
                     <div className="flex gap-1">
@@ -275,6 +314,9 @@ export function InvoicesPage() {
       </div>
 
       {showNew && <NewInvoiceModal onClose={() => setShowNew(false)} />}
+      {fundingFor && (
+        <RequestFundingModal invoice={fundingFor} onClose={() => setFundingFor(null)} />
+      )}
     </div>
   );
 }
