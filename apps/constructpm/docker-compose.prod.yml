@@ -169,6 +169,9 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       EMAIL_FROM: ${EMAIL_FROM:-noreply@os-funding.com}
+      # Where funding-request and onboarding alerts are delivered. Distinct from
+      # EMAIL_FROM, which is the noreply sender.
+      OPS_NOTIFICATION_EMAIL: ${OPS_NOTIFICATION_EMAIL:-}
       APP_URL: https://${DOMAIN:?set DOMAIN in .env.production}
       API_URL: https://${DOMAIN}
       SKIP_VIRUS_SCAN: ${SKIP_VIRUS_SCAN:-true}

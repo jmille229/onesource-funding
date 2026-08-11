@@ -23,7 +23,12 @@ const transport = enabled
 
 export const mailEnabled = enabled;
 
-export async function notify(opts: { to: string; subject: string; text: string }): Promise<void> {
+export async function notify(opts: { to: string | null; subject: string; text: string }): Promise<void> {
+  if (!opts.to) {
+    logger.info({ subject: opts.subject },
+      'OPS_NOTIFICATION_EMAIL not set — alert not sent');
+    return;
+  }
   if (!transport) {
     logger.info({ to: opts.to, subject: opts.subject }, 'mail disabled — notification skipped');
     return;
@@ -40,5 +45,15 @@ export async function notify(opts: { to: string; subject: string; text: string }
   }
 }
 
-/** Where operator-facing alerts go. Falls back to EMAIL_FROM if unset. */
-export const OPS_INBOX = env.SMTP_USER || env.EMAIL_FROM;
+/**
+ * Where operator-facing alerts go.
+ *
+ * Explicitly configured, not derived. This previously fell back to
+ * `SMTP_USER || EMAIL_FROM`, and both are wrong destinations: SMTP_USER is an
+ * auth username (an AKIA-style key on SES, not a mailbox), and EMAIL_FROM is a
+ * noreply address. Alerts would have been delivered nowhere useful.
+ */
+export const OPS_INBOX = env.OPS_NOTIFICATION_EMAIL ?? null;
+
+/** True when alerts have somewhere to go. */
+export const opsNotificationsEnabled = Boolean(enabled && OPS_INBOX);

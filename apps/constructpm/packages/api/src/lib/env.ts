@@ -75,6 +75,10 @@ const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   EMAIL_FROM: z.string().default('noreply@constructpm.local'),
+  // Where operator alerts (funding requests, onboarding enquiries) are sent.
+  // Needs its own setting: EMAIL_FROM is a noreply address and SMTP_USER is an
+  // auth username — for SES that's an AKIA-style key, not a mailbox at all.
+  OPS_NOTIFICATION_EMAIL: z.string().email().optional(),
 
   // URLs
   APP_URL: z.string().default('http://localhost:5173'),
