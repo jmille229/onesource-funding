@@ -17,6 +17,7 @@ import pg from 'pg';
 
 const APP_URL = process.env['TEST_APP_DATABASE_URL'];
 const OWNER_URL = process.env['TEST_DATABASE_URL'];
+const ADMIN_URL = process.env['TEST_ADMIN_DATABASE_URL'];
 const enabled = Boolean(APP_URL && OWNER_URL);
 
 const ACME = 'f1111111-1111-1111-1111-111111111111';
@@ -269,7 +270,10 @@ describe.runIf(enabled)('funding requests', () => {
       .rejects.toThrow(/permission denied/i);
   });
 
-  it('limits the operator to funding-request documents, not the whole file store', async () => {
+  // Skipped unless an operator connection is configured. The role is NOLOGIN
+  // until a password is set, so without TEST_ADMIN_DATABASE_URL this would fail
+  // on the connection rather than on the property under test.
+  it.runIf(ADMIN_URL)('limits the operator to funding-request documents, not the whole file store', async () => {
     const u = await ownerPool.query<{ id: string }>(
       `SELECT id FROM users WHERE company_id=$1 LIMIT 1`, [REQ_CO]);
     await ownerPool.query(
@@ -279,11 +283,10 @@ describe.runIf(enabled)('funding requests', () => {
               ($1,'job',$2,'site-photo.jpg','k2','image/jpeg',10,$3)`,
       [REQ_CO, requestId, u.rows[0]!.id]);
 
-    // Read as the operator role via its own connection.
-    const admin = new pg.Pool({
-      connectionString: (OWNER_URL as string).replace(
-        /\/\/[^@]*@/, '//constructpm_factoring_admin:adminpw@'),
-    });
+    // Read as the operator role over its own configured connection — never by
+    // rewriting the owner URL, which baked in a password that only existed on
+    // one machine and is exactly why this failed in CI.
+    const admin = new pg.Pool({ connectionString: ADMIN_URL });
     try {
       const r = await admin.query<{ original_name: string }>(
         `SELECT original_name FROM file_attachments WHERE company_id=$1`, [REQ_CO]);
