@@ -31,6 +31,59 @@ interface Advance {
   job_number: string | null;
 }
 
+/**
+ * Funding limit and remaining headroom.
+ *
+ * Shown because a contractor needs to know what they can draw before they go
+ * looking for an invoice to fund — and because a limit that visibly grows is the
+ * thing that brings them back for the second and twentieth advance. The reasons
+ * behind any individual decision stay internal.
+ */
+function FundingLimitCard({ limit, used, available }: {
+  limit: number; used: number; available: number;
+}) {
+  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+  const tight = available <= 0;
+
+  return (
+    <div className="card p-4 sm:p-5 mb-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-3">
+        <div>
+          <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Available to fund</p>
+          <p className={`text-2xl sm:text-3xl font-bold mt-0.5 tabular-nums ${
+            tight ? 'text-slate-400' : 'text-green-700'}`}>
+            {formatCurrency(available)}
+          </p>
+        </div>
+        <p className="text-sm text-slate-500 tabular-nums">
+          {formatCurrency(used)} of {formatCurrency(limit)} in use
+        </p>
+      </div>
+
+      <div
+        className="h-2 rounded-full bg-slate-100 overflow-hidden"
+        role="progressbar"
+        aria-valuenow={Math.round(pct)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="Funding limit used"
+      >
+        <div
+          className={`h-full rounded-full transition-[width] duration-500 ${
+            pct >= 90 ? 'bg-orange-500' : 'bg-brand-600'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+
+      <p className="text-xs text-slate-500 mt-2">
+        {tight
+          ? 'Your limit is fully drawn. It frees up as your open advances are collected.'
+          : 'Your limit grows as advances are repaid on time.'}
+      </p>
+    </div>
+  );
+}
+
 /** Recourse countdown is the number that actually matters, so it gets colour. */
 function RecourseCell({ days }: { days: number | null }) {
   if (days === null) return <span className="text-slate-400">—</span>;
@@ -93,6 +146,18 @@ export function FactoringPage() {
           </p>
         </div>
       </div>
+
+      {/* The funding limit sits above the position, because it is the number that
+          answers "can I fund the invoice on my desk right now?" — and the one
+          that earns the next request. The client sees the figures, never the
+          reasoning behind a decision. */}
+      {summary.funding_limit !== null && summary.funding_limit !== undefined && (
+        <FundingLimitCard
+          limit={Number(summary.funding_limit)}
+          used={Number(summary.funding_used ?? 0)}
+          available={Number(summary.funding_available ?? 0)}
+        />
+      )}
 
       {/* Headline position. Currency cards go full width on phones — see index.css. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">

@@ -3,6 +3,9 @@ import { z } from 'zod';
 import argon2 from 'argon2';
 import { adminPool, withAdminTransaction, audit } from '../../lib/admin-db.js';
 import { signPlatformToken } from '../../lib/jwt.js';
+import { buildUpdateSet } from '../../lib/sql.js';
+import { isPlaceholderInvoiceNumber } from '../factoring/underwriting.js';
+import { scoreRequest } from '../factoring/underwriting.service.js';
 import {
   asyncHandler, validate, authenticatePlatform, authRateLimit,
 } from '../../middleware/index.js';
@@ -72,12 +75,25 @@ adminRouter.get('/clients', asyncHandler(async (_req, res) => {
   const r = await pool().query(`
     SELECT fc.id, fc.company_id, fc.status, fc.credit_limit, fc.onboarded_on,
            fc.default_fee_schedule_id, c.name AS company_name,
+           fc.tax_lien_personal, fc.tax_lien_business, fc.judgement, fc.lawsuit,
+           fc.existing_ucc, fc.ucc_is_prior_factor, fc.personal_guarantee,
+           fc.uses_subs, fc.does_progress_billing, fc.negative_list, fc.negative_list_reason,
            COALESCE(SUM(fi.advance_amount) FILTER (WHERE fi.status='advanced'),0) AS advanced_outstanding,
-           COUNT(fi.id) FILTER (WHERE fi.status='advanced') AS outstanding_count
+           COUNT(fi.id) FILTER (WHERE fi.status='advanced') AS outstanding_count,
+           -- The two counts the graduated limit is built from, so the console can
+           -- show why a client's ceiling is what it is.
+           COUNT(fi.id) FILTER (
+             WHERE fi.status IN ('collected','closed')
+               AND COALESCE(fi.collected_on, fi.closed_on) - fi.advanced_on <= p.on_time_days) AS settled_on_time,
+           COUNT(fi.id) FILTER (
+             WHERE fi.status IN ('collected','closed')
+               AND COALESCE(fi.collected_on, fi.closed_on) - fi.advanced_on > p.on_time_days) AS settled_late
       FROM factoring_clients fc
       JOIN companies c ON c.id = fc.company_id
+      CROSS JOIN LATERAL (
+        SELECT on_time_days FROM underwriting_policy ORDER BY version DESC LIMIT 1) p
       LEFT JOIN factored_invoices fi ON fi.factoring_client_id = fc.id
-     GROUP BY fc.id, c.name
+     GROUP BY fc.id, c.name, p.on_time_days
      ORDER BY c.name`);
   res.json({ data: r.rows });
 }));
@@ -171,9 +187,16 @@ adminRouter.post(
 adminRouter.get('/debtors', asyncHandler(async (_req, res) => {
   const r = await pool().query(`
     SELECT d.id, d.legal_name, d.credit_limit, d.risk_grade,
+           d.portal_visibility, d.invoice_confirmation, d.ach_change,
+           d.staff_communication, d.verification_notes,
            COALESCE(SUM(fi.advance_amount) FILTER (WHERE fi.status='advanced'),0) AS exposure,
            COUNT(DISTINCT fi.company_id) FILTER (WHERE fi.status='advanced')      AS client_count,
-           COUNT(fi.id) FILTER (WHERE fi.status='advanced')                       AS invoice_count
+           COUNT(fi.id) FILTER (WHERE fi.status='advanced')                       AS invoice_count,
+           -- How this agency actually pays, which is what duration is priced on.
+           COUNT(fi.id) FILTER (WHERE fi.status IN ('collected','closed'))         AS settled_count,
+           PERCENTILE_CONT(0.5) WITHIN GROUP (
+             ORDER BY COALESCE(fi.collected_on, fi.closed_on) - fi.advanced_on)
+             FILTER (WHERE fi.status IN ('collected','closed'))                    AS median_dso
       FROM factoring_debtors d
       LEFT JOIN factored_invoices fi ON fi.debtor_id = d.id
      GROUP BY d.id ORDER BY exposure DESC`);
@@ -491,16 +514,307 @@ adminRouter.get('/requests/counts', asyncHandler(async (_req, res) => {
 }));
 
 adminRouter.get('/requests', asyncHandler(async (_req, res) => {
+  // Each request carries its latest underwriting decision so the queue can be
+  // triaged without opening every row — the whole point of scoring at intake.
   const r = await pool().query(`
     SELECT fr.*, c.name AS company_name,
            (SELECT COUNT(*) FROM file_attachments fa
-             WHERE fa.entity_type = 'funding_request' AND fa.entity_id = fr.id) AS document_count
+             WHERE fa.entity_type = 'funding_request' AND fa.entity_id = fr.id) AS document_count,
+           d.score        AS uw_score,
+           d.action       AS uw_action,
+           d.auto_applied AS uw_auto_applied,
+           d.override_action AS uw_override_action,
+           jsonb_array_length(d.hard_stops) AS uw_hard_stop_count,
+           d.exposure_limit, d.exposure_current, d.exposure_headroom,
+           d.recommended_advance_rate_pct
       FROM funding_requests fr
       JOIN companies c ON c.id = fr.company_id
+      LEFT JOIN LATERAL (
+        SELECT * FROM underwriting_decisions ud
+         WHERE ud.funding_request_id = fr.id
+         ORDER BY ud.created_at DESC LIMIT 1
+      ) d ON TRUE
      ORDER BY CASE WHEN fr.status IN ('submitted','under_review') THEN 0 ELSE 1 END,
               fr.requested_at DESC`);
   res.json({ data: r.rows });
 }));
+
+// ─── Underwriting ─────────────────────────────────────────────────────────────
+
+/** The full decision: every hard stop, every scored factor, and the inputs behind them. */
+adminRouter.get('/requests/:id/decision', asyncHandler(async (req, res) => {
+  const r = await pool().query(
+    `SELECT d.*, p.email AS overridden_by_email
+       FROM underwriting_decisions d
+       LEFT JOIN platform_users p ON p.id = d.overridden_by
+      WHERE d.funding_request_id = $1
+      ORDER BY d.created_at DESC LIMIT 1`, [req.params['id']]);
+  if (!r.rows[0]) { res.status(404).json({ error: 'not_found', message: 'No decision recorded yet' }); return; }
+  res.json({ data: r.rows[0] });
+}));
+
+/**
+ * Re-run the engine.
+ *
+ * Scoring is a snapshot, so a request scored before an agency's verification
+ * attributes were filled in keeps the old numbers until someone asks for a
+ * fresh look. Each run appends a new decision rather than replacing the last —
+ * the history of what was known when is part of the audit trail.
+ */
+adminRouter.post('/requests/:id/rescore', asyncHandler(async (req, res) => {
+  const decision = await scoreRequest(String(req.params['id']));
+  if (!decision) { res.status(404).json({ error: 'not_found', message: 'Request not found' }); return; }
+  await withAdminTransaction((c) => audit(c, {
+    platformUserId: req.platform.userId, action: 'rescore_request',
+    entityType: 'funding_request', entityId: String(req.params['id']),
+    after: { score: decision.score, action: decision.action }, ip: req.ip ?? null,
+  }));
+  res.json({ data: decision });
+}));
+
+/**
+ * Record a departure from the engine.
+ *
+ * The database requires an author, an action and a non-empty reason together
+ * (uw_override_ck). Overrides are the training data for the next policy
+ * version — an override with no stated reason teaches nothing, and a model
+ * nobody explains their disagreement with stops being trusted.
+ */
+adminRouter.post(
+  '/requests/:id/override',
+  validate(z.object({
+    action: z.enum(['approve', 'refer', 'decline']),
+    reason: z.string().trim().min(10, 'Give a reason of at least 10 characters'),
+  })),
+  asyncHandler(async (req, res) => {
+    const b = req.body as { action: string; reason: string };
+    const out = await withAdminTransaction(async (c) => {
+      const d = await c.query(
+        `SELECT * FROM underwriting_decisions
+          WHERE funding_request_id = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+        [req.params['id']]);
+      if (!d.rows[0]) throw Object.assign(new Error('no decision to override'), { status: 404 });
+
+      const updated = await c.query(
+        `UPDATE underwriting_decisions
+            SET override_action = $2, override_reason = $3,
+                overridden_by = $4, overridden_at = NOW()
+          WHERE id = $1 RETURNING *`,
+        [d.rows[0]['id'], b.action, b.reason, req.platform.userId]);
+
+      await audit(c, {
+        platformUserId: req.platform.userId, action: 'override_decision',
+        entityType: 'funding_request', entityId: String(req.params['id']),
+        companyId: d.rows[0]['company_id'],
+        before: { action: d.rows[0]['action'], score: d.rows[0]['score'] },
+        after: { action: b.action, reason: b.reason }, ip: req.ip ?? null,
+      });
+      return updated.rows[0];
+    });
+    res.json({ data: out });
+  })
+);
+
+/**
+ * Key in a request that arrived by email or text.
+ *
+ * Clients still send invoices outside the app, and those need to reach the same
+ * engine as in-app requests rather than being decided by eye off-system. The
+ * request is created with source='operator' and no ConstructPM invoice behind
+ * it, then scored identically.
+ */
+adminRouter.post(
+  '/requests',
+  validate(z.object({
+    company_id: z.string().uuid(),
+    debtor_id: z.string().uuid().nullable().optional(),
+    invoice_number: z.string().trim().min(1, 'Invoice number is required'),
+    requested_amount: z.number().positive(),
+    customer_name: z.string().trim().min(1).nullable().optional(),
+    note: z.string().max(2000).nullable().optional(),
+  })),
+  asyncHandler(async (req, res) => {
+    const b = req.body as Record<string, unknown>;
+
+    // The engine hard-stops a placeholder invoice number, but catching it here
+    // gives the operator a straight answer at entry instead of a decline to
+    // interpret. Both such advances in the historical book are unpaid.
+    if (isPlaceholderInvoiceNumber(String(b['invoice_number']))) {
+      res.status(422).json({
+        error: 'invalid_invoice_number',
+        message: 'A real invoice number is required. Every advance written without one is unpaid.',
+      });
+      return;
+    }
+
+    const created = await withAdminTransaction(async (c) => {
+      const r = await c.query(
+        `INSERT INTO funding_requests
+           (company_id, invoice_id, debtor_id, requested_amount, customer_name,
+            invoice_number, note, source, entered_by)
+         VALUES ($1, NULL, $2, $3, $4, $5, $6, 'operator', $7)
+         RETURNING *`,
+        [b['company_id'], b['debtor_id'] ?? null, b['requested_amount'],
+         b['customer_name'] ?? null, String(b['invoice_number']).trim(),
+         b['note'] ?? null, req.platform.userId]);
+
+      await audit(c, {
+        platformUserId: req.platform.userId, action: 'create_request',
+        entityType: 'funding_request', entityId: r.rows[0]!['id'] as string,
+        companyId: String(b['company_id']), after: r.rows[0], ip: req.ip ?? null,
+      });
+      return r.rows[0]!;
+    });
+
+    const decision = await scoreRequest(created['id'] as string);
+    res.status(201).json({ data: { request: created, decision } });
+  })
+);
+
+/** Agency verification attributes — the strongest predictor in the historical book. */
+adminRouter.patch(
+  '/debtors/:id',
+  validate(z.object({
+    portal_visibility: z.boolean().optional(),
+    invoice_confirmation: z.enum(['none', 'confirmed', 'purchase_order']).optional(),
+    ach_change: z.boolean().optional(),
+    staff_communication: z.boolean().optional(),
+    verification_notes: z.string().max(2000).nullable().optional(),
+    credit_limit: z.number().nonnegative().nullable().optional(),
+    risk_grade: z.string().max(16).nullable().optional(),
+  })),
+  asyncHandler(async (req, res) => {
+    const allowed = ['portal_visibility', 'invoice_confirmation', 'ach_change',
+                     'staff_communication', 'verification_notes', 'credit_limit', 'risk_grade'];
+    const set = buildUpdateSet(req.body as Record<string, unknown>, allowed);
+    if (!set.clause) { res.status(400).json({ error: 'no_fields', message: 'Nothing to update' }); return; }
+
+    const out = await withAdminTransaction(async (c) => {
+      const before = await c.query(`SELECT * FROM factoring_debtors WHERE id = $1`, [req.params['id']]);
+      if (!before.rows[0]) throw Object.assign(new Error('debtor not found'), { status: 404 });
+      const r = await c.query(
+        `UPDATE factoring_debtors SET ${set.clause}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+        [req.params['id'], ...set.values]);
+      await audit(c, {
+        platformUserId: req.platform.userId, action: 'update_debtor',
+        entityType: 'factoring_debtor', entityId: String(req.params['id']),
+        before: before.rows[0], after: r.rows[0], ip: req.ip ?? null,
+      });
+      return r.rows[0];
+    });
+    res.json({ data: out });
+  })
+);
+
+/** Client screening attributes, including the two questions asked at onboarding. */
+adminRouter.patch(
+  '/clients/:id/underwriting',
+  validate(z.object({
+    tax_lien_personal: z.enum(['unknown', 'clean', 'present']).optional(),
+    tax_lien_business: z.enum(['unknown', 'clean', 'present']).optional(),
+    judgement: z.enum(['unknown', 'clean', 'present']).optional(),
+    lawsuit: z.enum(['unknown', 'clean', 'present']).optional(),
+    existing_ucc: z.enum(['unknown', 'clean', 'present']).optional(),
+    ucc_is_prior_factor: z.boolean().optional(),
+    personal_guarantee: z.boolean().optional(),
+    uses_subs: z.boolean().nullable().optional(),
+    does_progress_billing: z.boolean().nullable().optional(),
+    negative_list: z.boolean().optional(),
+    negative_list_reason: z.string().max(1000).nullable().optional(),
+    credit_limit: z.number().nonnegative().nullable().optional(),
+  })),
+  asyncHandler(async (req, res) => {
+    const allowed = ['tax_lien_personal', 'tax_lien_business', 'judgement', 'lawsuit',
+                     'existing_ucc', 'ucc_is_prior_factor', 'personal_guarantee', 'uses_subs',
+                     'does_progress_billing', 'negative_list', 'negative_list_reason', 'credit_limit'];
+    const set = buildUpdateSet(req.body as Record<string, unknown>, allowed);
+    if (!set.clause) { res.status(400).json({ error: 'no_fields', message: 'Nothing to update' }); return; }
+
+    const out = await withAdminTransaction(async (c) => {
+      const before = await c.query(`SELECT * FROM factoring_clients WHERE id = $1`, [req.params['id']]);
+      if (!before.rows[0]) throw Object.assign(new Error('client not found'), { status: 404 });
+      const r = await c.query(
+        `UPDATE factoring_clients SET ${set.clause}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+        [req.params['id'], ...set.values]);
+      await audit(c, {
+        platformUserId: req.platform.userId, action: 'update_client_underwriting',
+        entityType: 'factoring_client', entityId: String(req.params['id']),
+        companyId: before.rows[0]['company_id'] as string,
+        before: before.rows[0], after: r.rows[0], ip: req.ip ?? null,
+      });
+      return r.rows[0];
+    });
+    res.json({ data: out });
+  })
+);
+
+/** The policy in force. */
+adminRouter.get('/policy', asyncHandler(async (_req, res) => {
+  const r = await pool().query(`SELECT * FROM underwriting_policy ORDER BY version DESC LIMIT 1`);
+  res.json({ data: r.rows[0] ?? null });
+}));
+
+/**
+ * Publish a new policy version.
+ *
+ * Append-only: superseding a policy inserts a successor rather than editing the
+ * row in place, so a decision made last month can always be re-explained against
+ * the thresholds that were actually in force when it was made.
+ */
+adminRouter.post(
+  '/policy',
+  validate(z.object({
+    auto_approve_enabled: z.boolean().optional(),
+    auto_approve_ceiling: z.number().positive().optional(),
+    clean_score: z.number().int().min(0).max(100).optional(),
+    decline_score: z.number().int().min(0).max(100).optional(),
+    starting_limit: z.number().nonnegative().optional(),
+    limit_step: z.number().nonnegative().optional(),
+    max_limit: z.number().positive().optional(),
+    on_time_days: z.number().int().positive().optional(),
+    impairment_days: z.number().int().positive().optional(),
+    default_advance_rate_pct: z.number().positive().max(100).optional(),
+    min_advance_rate_pct: z.number().positive().max(100).optional(),
+    max_advance_rate_pct: z.number().positive().max(100).optional(),
+    large_invoice_threshold: z.number().positive().optional(),
+    step_up_multiple: z.number().positive().optional(),
+    debtor_concentration_pct: z.number().positive().max(100).optional(),
+    notes: z.string().max(2000).optional(),
+  }).refine(
+    (v) => v.clean_score === undefined || v.decline_score === undefined || v.clean_score > v.decline_score,
+    { message: 'clean_score must be above decline_score' },
+  )),
+  asyncHandler(async (req, res) => {
+    const out = await withAdminTransaction(async (c) => {
+      const cur = await c.query(`SELECT * FROM underwriting_policy ORDER BY version DESC LIMIT 1`);
+      const base = cur.rows[0];
+      if (!base) throw Object.assign(new Error('no policy to supersede'), { status: 500 });
+
+      const next = { ...base, ...(req.body as Record<string, unknown>) };
+      const version = Number(base['version']) + 1;
+      const r = await c.query(
+        `INSERT INTO underwriting_policy
+           (version, auto_approve_enabled, auto_approve_ceiling, clean_score, decline_score,
+            starting_limit, limit_step, max_limit, on_time_days, impairment_days,
+            default_advance_rate_pct, min_advance_rate_pct, max_advance_rate_pct,
+            large_invoice_threshold, step_up_multiple, debtor_concentration_pct, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+        [version, next['auto_approve_enabled'], next['auto_approve_ceiling'], next['clean_score'],
+         next['decline_score'], next['starting_limit'], next['limit_step'], next['max_limit'],
+         next['on_time_days'], next['impairment_days'], next['default_advance_rate_pct'],
+         next['min_advance_rate_pct'], next['max_advance_rate_pct'], next['large_invoice_threshold'],
+         next['step_up_multiple'], next['debtor_concentration_pct'], next['notes'] ?? null]);
+
+      await audit(c, {
+        platformUserId: req.platform.userId, action: 'publish_policy',
+        entityType: 'underwriting_policy', entityId: String(version),
+        before: base, after: r.rows[0], ip: req.ip ?? null,
+      });
+      return r.rows[0];
+    });
+    res.status(201).json({ data: out });
+  })
+);
 
 adminRouter.get('/onboarding-requests', asyncHandler(async (_req, res) => {
   const r = await pool().query(`
