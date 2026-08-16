@@ -114,7 +114,18 @@ export interface UnderwritingDecision {
   action: UnderwritingAction;
   /** True when policy allows the engine to act without a human on this request. */
   auto_applied: boolean;
+  /** Conditions that are never funded, whatever the score says. */
   hard_stops: HardStop[];
+  /**
+   * Conditions that require a human but are routinely fine.
+   *
+   * Kept separate from hard stops because the distinction is expensive to get
+   * wrong in either direction. Replaying the book with the exposure ceiling as a
+   * hard decline blocks $35,776 of fees from clients who repaid without issue —
+   * $28,834 of it from a single good client — to stop one bad one. Those are
+   * conversations to have, not advances to refuse.
+   */
+  referrals: HardStop[];
   factors: Factor[];
   recommended_advance_rate_pct: number;
   exposure_limit: number;
@@ -136,11 +147,17 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
 /**
  * The graduated exposure ceiling.
  *
- * Every client starts at the same modest limit and earns headroom one settled
- * advance at a time; a late settlement gives some back. This is the single
- * control that would have mattered most historically — it caps the ramp that
- * turned a manageable relationship into a loss larger than the book's lifetime
- * revenue.
+ * Every client starts at the same limit and earns headroom one settled advance
+ * at a time; a late settlement gives some back.
+ *
+ * On the two parameters: the $50,000 starting limit is OneSource's existing
+ * policy for new clients. The step is **not** — there is no formal step today,
+ * so it was derived by replaying the book. Any step below roughly $100,000
+ * avoids the entire historical loss (the starting limit does that work, not the
+ * step); above it, one settled advance buys enough headroom for the $94,710
+ * advance that went bad. $25,000 sits well clear of that cliff while letting a
+ * client reach the exposure good clients actually ran at within a few
+ * settlements. It is a proposal to tune, not an observed constant.
  *
  * A manually set limit on the client record always wins, so an operator can
  * override in either direction without fighting the formula.
@@ -169,6 +186,8 @@ export function underwrite(inputs: UnderwritingInputs, policy: UnderwritingPolic
   // structurally unsafe. These are not scored — no combination of positives
   // argues them away.
   const hard_stops: HardStop[] = [];
+  // Conditions that need a person but are frequently fine. See UnderwritingDecision.
+  const referrals: HardStop[] = [];
 
   if (isPlaceholderInvoiceNumber(request.invoice_number)) {
     hard_stops.push({
@@ -188,14 +207,27 @@ export function underwrite(inputs: UnderwritingInputs, policy: UnderwritingPolic
       label: `Client has ${client.impaired_count} advance(s) outstanding beyond ${policy.impairment_days} days.`,
     });
   }
+
+  // A second advance against an open invoice number is double-pledging — unless
+  // the client bills progress applications, where successive draws against the
+  // same application number are ordinary practice. Same fact, opposite meaning,
+  // so the client's billing method decides which it is.
   if (client.duplicate_open_invoice) {
-    hard_stops.push({
+    const entry = {
       code: 'duplicate_open_invoice',
-      label: 'An advance is already open against this invoice number.',
-    });
+      label: client.does_progress_billing === true
+        ? 'An advance is already open against this invoice number. Expected on progress applications — confirm this is a later draw, not the same one twice.'
+        : 'An advance is already open against this invoice number.',
+    };
+    if (client.does_progress_billing === true) referrals.push(entry);
+    else hard_stops.push(entry);
   }
+
+  // Exceeding the ceiling is a conversation, not a refusal. Replayed against the
+  // book, treating it as a decline would have blocked 8 of one good client's 17
+  // advances and $35,776 of fees on business that repaid in full.
   if (request.requested_amount > headroom) {
-    hard_stops.push({
+    referrals.push({
       code: 'exceeds_headroom',
       label: `Request of ${request.requested_amount.toFixed(2)} exceeds available headroom of ${headroom.toFixed(2)} ` +
              `(limit ${limit.toFixed(2)}, currently out ${current.toFixed(2)}).`,
@@ -270,10 +302,18 @@ export function underwrite(inputs: UnderwritingInputs, policy: UnderwritingPolic
   if (isLarge) {
     deduct('invoice_large', `Above the ${policy.large_invoice_threshold.toFixed(0)} scrutiny threshold.`, -5);
   }
-  if (client.does_progress_billing === true && isLarge) {
-    deduct('progress_withholding',
-      'Progress-billed work above the scrutiny threshold — payment can be withheld for incomplete or non-conforming work.',
-      -8);
+  // Progress billing carries withholding risk inherently: payment can be held
+  // back for incomplete or non-conforming work on a draw that has already been
+  // advanced against. The one realised loss in the book was a progress biller,
+  // so the penalty applies to every progress-billed invoice and compounds above
+  // the scrutiny threshold — but stays modest, because a single loss is thin
+  // evidence and several good clients bill the same way.
+  if (client.does_progress_billing === true) {
+    deduct('progress_billing', 'Progress-billed work — payment can be withheld for incomplete performance.', -4);
+    if (isLarge) {
+      deduct('progress_withholding',
+        'Large progress draw — the portion most often disputed at closeout.', -8);
+    }
   }
   if (client.uses_subs === true) {
     deduct('uses_subs', 'Client uses subcontractors — unpaid subs create competing claims on this receivable.', -6);
@@ -309,6 +349,9 @@ export function underwrite(inputs: UnderwritingInputs, policy: UnderwritingPolic
     action = 'decline';
   } else if (score < policy.decline_score) {
     action = 'decline';
+  } else if (referrals.length > 0) {
+    // Never auto-approved, never auto-declined: a person decides.
+    action = 'refer';
   } else if (score >= policy.clean_score) {
     action = 'approve';
   } else {
@@ -323,6 +366,7 @@ export function underwrite(inputs: UnderwritingInputs, policy: UnderwritingPolic
     policy.auto_approve_enabled &&
     action === 'approve' &&
     hard_stops.length === 0 &&
+    referrals.length === 0 &&
     request.requested_amount <= policy.auto_approve_ceiling &&
     client.uses_subs !== null &&
     client.does_progress_billing !== null;
@@ -345,6 +389,7 @@ export function underwrite(inputs: UnderwritingInputs, policy: UnderwritingPolic
     action,
     auto_applied,
     hard_stops,
+    referrals,
     factors,
     recommended_advance_rate_pct,
     exposure_limit: limit,

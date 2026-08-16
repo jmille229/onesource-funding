@@ -47,6 +47,7 @@ interface Decision {
   action: Action;
   auto_applied: boolean;
   hard_stops: { code: string; label: string }[];
+  referrals: { code: string; label: string }[];
   factors: { code: string; label: string; points: number }[];
   inputs: Record<string, Record<string, unknown>>;
   recommended_advance_rate_pct: string;
@@ -151,6 +152,24 @@ function DecisionPanel({ requestId, onChanged }: { requestId: string; onChanged:
             {data.hard_stops.map((h) => (
               <li key={h.code} className="text-sm text-red-900 flex gap-2">
                 <ShieldAlert className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{h.label}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Referrals are the opposite: usually fine, but never decided without a
+          person. Kept visually distinct so "look at this" doesn't read as "no". */}
+      {(data.referrals ?? []).length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 mb-2">
+            Needs a person — often fine, never automatic
+          </p>
+          <ul className="space-y-1">
+            {data.referrals.map((h) => (
+              <li key={h.code} className="text-sm text-amber-900 flex gap-2">
+                <ShieldQuestion className="w-4 h-4 flex-shrink-0 mt-0.5" />
                 <span>{h.label}</span>
               </li>
             ))}
