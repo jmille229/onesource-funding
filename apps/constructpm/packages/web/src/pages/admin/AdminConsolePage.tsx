@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Shield, Loader2, LogOut, Upload, AlertTriangle } from 'lucide-react';
 import { adminApi, useAdminStore, hasAdminToken } from '../../lib/admin-api';
 import { formatCurrency, formatDate } from '../../lib/api';
+import { UnderwritingQueue } from './UnderwritingQueue';
 
 // ─── Login ────────────────────────────────────────────────────────────────────
 function AdminLogin() {
@@ -221,12 +222,14 @@ function ImportPanel() {
 }
 
 // ─── Console ──────────────────────────────────────────────────────────────────
-const TABS = ['Advances', 'Clients', 'Debtors', 'Import', 'Audit'] as const;
+// Requests leads: it is the only tab with work waiting on it, and the queue is
+// where the underwriting engine actually earns its keep.
+const TABS = ['Requests', 'Advances', 'Clients', 'Debtors', 'Import', 'Audit'] as const;
 
 export function AdminConsolePage() {
   const email = useAdminStore((s) => s.email);
   const logout = useAdminStore((s) => s.logout);
-  const [tab, setTab] = useState<(typeof TABS)[number]>('Advances');
+  const [tab, setTab] = useState<(typeof TABS)[number]>('Requests');
   const [funding, setFunding] = useState(false);
   const qc = useQueryClient();
 
@@ -262,6 +265,7 @@ export function AdminConsolePage() {
       </nav>
 
       <main className="max-w-7xl mx-auto page">
+        {tab === 'Requests' && <UnderwritingQueue />}
         {tab === 'Advances' && (
           <>
             <div className="page-header">

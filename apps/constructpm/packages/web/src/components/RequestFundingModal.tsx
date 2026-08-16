@@ -138,6 +138,31 @@ export function RequestFundingModal({ invoice, onClose }: Props) {
         {/* ── Existing client: attach, then request ───────────────────────── */}
         {!isLoading && isClient && (
           <div className="p-5 space-y-4">
+            {/* Say up front whether this invoice fits inside the limit. Finding
+                out after uploading a document and pressing request is a bad way
+                to learn it doesn't. */}
+            {summary?.funding_available !== null && summary?.funding_available !== undefined && (() => {
+              const available = Number(summary.funding_available);
+              const amount = Number(invoice.total);
+              const fits = amount <= available;
+              return (
+                <div className={`rounded-lg border p-3 text-sm ${
+                  fits ? 'border-slate-200 bg-slate-50 text-slate-700'
+                       : 'border-orange-200 bg-orange-50 text-orange-900'}`}>
+                  <p className="font-medium tabular-nums">
+                    {formatCurrency(available)} available to fund
+                  </p>
+                  {!fits && (
+                    <p className="mt-0.5">
+                      This invoice is {formatCurrency(amount - available)} above your remaining limit.
+                      You can still request it — OneSource will review — or wait until an open advance
+                      is collected.
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+
             <p className="text-sm text-slate-600">
               Attach a copy of the invoice you’ve sent your customer. OneSource underwrites
               against that document, so it’s required before requesting.
