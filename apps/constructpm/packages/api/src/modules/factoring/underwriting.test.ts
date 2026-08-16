@@ -44,6 +44,7 @@ function baseline(): UnderwritingInputs {
       settled_on_time: 20,
       settled_late: 0,
       impaired_count: 0,
+      impaired_in_slow_agencies: 0,
       open_exposure: 40000,
       trailing_median_invoice: 9600,
       duplicate_open_invoice: false,
@@ -58,6 +59,8 @@ function baseline(): UnderwritingInputs {
       median_dso: 32,
       impaired_count: 0,
       share_of_open_book_pct: 20,
+      in_slowdown: false,
+      slowdown_clients_affected: 0,
     },
   };
 }
@@ -136,8 +139,15 @@ describe('hard stops', () => {
     expect(d.hard_stops.map(h => h.code)).toContain('client_negative_list');
   });
 
-  it('declines while any advance is impaired', () => {
-    const d = underwrite(merge({ client: { impaired_count: 1 } }), POLICY);
+  it('declines while any advance is impaired for reasons the agency does not explain', () => {
+    const d = underwrite(merge({ client: { impaired_count: 1, impaired_in_slow_agencies: 0 } }), POLICY);
+    expect(d.action).toBe('decline');
+    expect(d.hard_stops.map(h => h.code)).toContain('client_impaired');
+  });
+
+  it('declines when only some of the impairment is explained by a slow agency', () => {
+    // Two advances long, one of them with an agency paying everyone else fine.
+    const d = underwrite(merge({ client: { impaired_count: 2, impaired_in_slow_agencies: 1 } }), POLICY);
     expect(d.action).toBe('decline');
     expect(d.hard_stops.map(h => h.code)).toContain('client_impaired');
   });
@@ -421,5 +431,71 @@ describe('historical replay — BDFS Group', () => {
     expect(codes).toContain('ucc_prior_factor');
     expect(codes).toContain('debtor_concentration');
     expect(d.action).not.toBe('approve');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agency slowdown vs client credit.
+//
+// Both of these are real positions from the book, and they must resolve in
+// opposite directions.
+//
+// Surratt Painting sits behind PHDC, which has slowed measurably: median days to
+// pay roughly doubled from 21 to 50 over eight months. Their 13 open advances run
+// at a median age of 34 days — identical to PHDC's other four clients. Nothing
+// about their position is idiosyncratic to them. Left as a hard stop, one agency
+// slowing would auto-decline five clients holding 45% of the open book.
+//
+// BDFS is the opposite: their impairment sits with an agency that only they ever
+// used, and with one that settled seven of eight advances for others.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('agency slowdown vs client credit risk', () => {
+  const behindSlowAgency = (impaired: number) => merge({
+    client: {
+      settled_on_time: 6, settled_late: 0, open_exposure: 90000,
+      impaired_count: impaired, impaired_in_slow_agencies: impaired,
+      trailing_median_invoice: 12000,
+    },
+    debtor: {
+      known: true, settled_count: 180, median_dso: 32,
+      in_slowdown: true, slowdown_clients_affected: 5,
+      impaired_count: 9,
+    },
+  });
+
+  it('refers rather than declines a client whose advances are long only because the agency slowed', () => {
+    const d = underwrite(behindSlowAgency(4), POLICY);
+    expect(d.hard_stops).toHaveLength(0);
+    expect(d.action).toBe('refer');
+    expect(d.referrals.map(h => h.code)).toContain('client_impaired_agency_slowdown');
+  });
+
+  it('does not charge the client for the agency being impaired when it is a slowdown', () => {
+    // -25 for an impaired agency is a credit signal. During a measured slowdown
+    // the same fact is duration, which the fee schedule already prices.
+    const d = underwrite(behindSlowAgency(4), POLICY);
+    const codes = d.factors.map(f => f.code);
+    expect(codes).not.toContain('debtor_impaired');
+    expect(codes).toContain('debtor_slowdown');
+    expect(d.factors.find(f => f.code === 'debtor_slowdown')?.points).toBe(-5);
+  });
+
+  it('still charges -25 when an agency is impaired but paying everyone else normally', () => {
+    const d = underwrite(merge({
+      debtor: { impaired_count: 2, in_slowdown: false, slowdown_clients_affected: 0 },
+    }), POLICY);
+    expect(d.factors.map(f => f.code)).toContain('debtor_impaired');
+  });
+
+  it('keeps the hard stop when the agency only ever dealt with this one client', () => {
+    // A slowdown needs more than one client affected to count as the agency's
+    // doing. An agency used by exactly one contractor can never qualify.
+    const d = underwrite(merge({
+      client: { impaired_count: 2, impaired_in_slow_agencies: 0 },
+      debtor: { known: true, settled_count: 0, median_dso: null, in_slowdown: false,
+                slowdown_clients_affected: 1, impaired_count: 2 },
+    }), POLICY);
+    expect(d.action).toBe('decline');
+    expect(d.hard_stops.map(h => h.code)).toContain('client_impaired');
   });
 });
