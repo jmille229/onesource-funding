@@ -225,11 +225,12 @@ export async function scoreRequest(requestId: string): Promise<UnderwritingDecis
     await client.query(
       `INSERT INTO underwriting_decisions
          (funding_request_id, company_id, policy_version, score, action, auto_applied,
-          hard_stops, factors, inputs, recommended_advance_rate_pct,
+          hard_stops, referrals, factors, inputs, recommended_advance_rate_pct,
           exposure_limit, exposure_current, exposure_headroom)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [request.id, request.company_id, policy.version, decision.score, decision.action,
-       decision.auto_applied, JSON.stringify(decision.hard_stops), JSON.stringify(decision.factors),
+       decision.auto_applied, JSON.stringify(decision.hard_stops), JSON.stringify(decision.referrals),
+       JSON.stringify(decision.factors),
        JSON.stringify(inputs), decision.recommended_advance_rate_pct,
        decision.exposure_limit, decision.exposure_current, decision.exposure_headroom]);
 

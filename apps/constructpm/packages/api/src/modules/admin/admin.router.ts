@@ -525,6 +525,7 @@ adminRouter.get('/requests', asyncHandler(async (_req, res) => {
            d.auto_applied AS uw_auto_applied,
            d.override_action AS uw_override_action,
            jsonb_array_length(d.hard_stops) AS uw_hard_stop_count,
+           jsonb_array_length(d.referrals)  AS uw_referral_count,
            d.exposure_limit, d.exposure_current, d.exposure_headroom,
            d.recommended_advance_rate_pct
       FROM funding_requests fr

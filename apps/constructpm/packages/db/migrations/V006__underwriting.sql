@@ -102,9 +102,15 @@ CREATE TABLE IF NOT EXISTS underwriting_policy (
 
   -- Graduated exposure. A new client starts at starting_limit; every advance
   -- that settles within on_time_days raises the ceiling by limit_step, every
-  -- late one lowers it. BDFS would have been held near $50K instead of $317K.
+  -- late one lowers it.
+  --
+  -- starting_limit is OneSource's existing policy for new clients. limit_step is
+  -- not — there is no formal step today, so it was derived by replaying the book:
+  -- any step below ~$100,000 avoids the whole historical loss (the starting limit
+  -- does that work), while above it one settled advance buys enough headroom for
+  -- the $94,710 advance that went bad. Tune it; it is a proposal, not a constant.
   starting_limit           NUMERIC(15,2) NOT NULL DEFAULT 50000,
-  limit_step               NUMERIC(15,2) NOT NULL DEFAULT 15000,
+  limit_step               NUMERIC(15,2) NOT NULL DEFAULT 25000,
   max_limit                NUMERIC(15,2) NOT NULL DEFAULT 300000,
   on_time_days             INT NOT NULL DEFAULT 75,
   impairment_days          INT NOT NULL DEFAULT 120,  -- open past this = impaired
@@ -152,9 +158,13 @@ CREATE TABLE IF NOT EXISTS underwriting_decisions (
   action                underwriting_action NOT NULL,
   auto_applied          BOOLEAN NOT NULL DEFAULT FALSE,
 
-  -- Hard stops are recorded separately from scored factors: they are the
-  -- reasons a decision cannot be argued up, and they read differently in the UI.
+  -- Three separate lists because they mean different things to the operator.
+  -- hard_stops are never funded. referrals are routinely fine but need a person:
+  -- replaying the book with the exposure ceiling as a hard decline blocks $35,776
+  -- of fees from clients who repaid in full, $28,834 of it from one good client.
+  -- factors are the scored detail behind the number.
   hard_stops            JSONB NOT NULL DEFAULT '[]'::jsonb,
+  referrals             JSONB NOT NULL DEFAULT '[]'::jsonb,
   factors               JSONB NOT NULL DEFAULT '[]'::jsonb,
   inputs                JSONB NOT NULL DEFAULT '{}'::jsonb,
 

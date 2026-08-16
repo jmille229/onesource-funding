@@ -12,7 +12,7 @@ const POLICY: UnderwritingPolicy = {
   clean_score: 75,
   decline_score: 50,
   starting_limit: 50000,
-  limit_step: 15000,
+  limit_step: 25000,
   max_limit: 300000,
   on_time_days: 75,
   impairment_days: 120,
@@ -97,12 +97,12 @@ describe('exposureLimit', () => {
 
   it('earns up one settled advance at a time', () => {
     expect(exposureLimit({ credit_limit_override: null, settled_on_time: 3, settled_late: 0 }, POLICY))
-      .toBe(95000);
+      .toBe(125000);
   });
 
   it('gives headroom back on late settlements', () => {
     expect(exposureLimit({ credit_limit_override: null, settled_on_time: 3, settled_late: 2 }, POLICY))
-      .toBe(65000);
+      .toBe(75000);
   });
 
   it('caps at the policy maximum however long the history', () => {
@@ -148,20 +148,33 @@ describe('hard stops', () => {
     expect(d.hard_stops.map(h => h.code)).toContain('duplicate_open_invoice');
   });
 
+  it('refers rather than declines the same case for a progress biller', () => {
+    // Successive draws against one application number are ordinary practice.
+    const d = underwrite(merge({
+      client: { duplicate_open_invoice: true, does_progress_billing: true },
+    }), POLICY);
+    expect(d.action).toBe('refer');
+    expect(d.hard_stops).toHaveLength(0);
+    expect(d.referrals.map(h => h.code)).toContain('duplicate_open_invoice');
+  });
+
   it('declines a prospect who has not been onboarded', () => {
     const d = underwrite(merge({ client: { status: 'prospect' } }), POLICY);
     expect(d.action).toBe('decline');
     expect(d.hard_stops.map(h => h.code)).toContain('client_not_active');
   });
 
-  it('declines when the request exceeds remaining headroom', () => {
-    // Limit 350000 capped to 300000; 290000 already out leaves 10000.
+  it('refers — never declines — when the request exceeds remaining headroom', () => {
+    // Limit capped at 300000; 290000 already out leaves 10000.
+    // Treating this as a decline would have blocked 8 of one good client's 17
+    // advances and $35,776 of fees on business that repaid in full.
     const d = underwrite(merge({
       client: { settled_on_time: 20, open_exposure: 290000 },
       request: { requested_amount: 25000 },
     }), POLICY);
-    expect(d.action).toBe('decline');
-    expect(d.hard_stops.map(h => h.code)).toContain('exceeds_headroom');
+    expect(d.action).toBe('refer');
+    expect(d.hard_stops).toHaveLength(0);
+    expect(d.referrals.map(h => h.code)).toContain('exceeds_headroom');
     expect(d.exposure_headroom).toBe(10000);
   });
 
@@ -360,21 +373,28 @@ describe('historical replay — BDFS Group', () => {
     expect(d.action).toBe('decline');
   });
 
-  it('stops it on three independent grounds, not one lucky rule', () => {
-    const codes = underwrite(secondAdvance(), POLICY).hard_stops.map(h => h.code);
-    expect(codes).toContain('no_invoice_number');   // invoice # was literally "-"
-    expect(codes).toContain('exceeds_headroom');    // $38,952 out against a $50,000 starting limit
-    expect(codes.length).toBeGreaterThanOrEqual(2);
+  it('stops it on independent grounds, not one lucky rule', () => {
+    const d = underwrite(secondAdvance(), POLICY);
+    expect(d.hard_stops.map(h => h.code)).toContain('no_invoice_number');
+    // $38,952 already out against a $50,000 starting limit. A referral rather
+    // than a stop — exceeding a ceiling is a conversation — but it still
+    // guarantees a person sees this before any money moves.
+    expect(d.referrals.map(h => h.code)).toContain('exceeds_headroom');
+    expect(d.score).toBe(0);
   });
 
-  it('would still have declined it with a valid invoice number', () => {
-    // The exposure ceiling alone holds the line, which is the control that matters:
-    // it does not depend on spotting a bad document.
+  it('would still have declined it with a valid invoice number and a document', () => {
+    // The important property: the decline does not depend on spotting bad
+    // paperwork. Stripped of the placeholder invoice number, the risk profile
+    // alone — an agency we cannot verify or be paid directly by, a prior
+    // factor's UCC, a business tax lien, no settled history — scores it to the
+    // floor.
     const withNumber = { ...secondAdvance() };
     withNumber.request = { ...withNumber.request, invoice_number: 'NKCDC-2025-08', has_document: true };
     const d = underwrite(withNumber, POLICY);
+    expect(d.hard_stops).toHaveLength(0);
+    expect(d.score).toBeLessThan(POLICY.decline_score);
     expect(d.action).toBe('decline');
-    expect(d.hard_stops.map(h => h.code)).toContain('exceeds_headroom');
   });
 
   it('caps total exposure near $50,000 instead of $317,251', () => {
