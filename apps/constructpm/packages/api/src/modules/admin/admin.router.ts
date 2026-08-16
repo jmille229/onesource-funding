@@ -196,7 +196,29 @@ adminRouter.get('/debtors', asyncHandler(async (_req, res) => {
            COUNT(fi.id) FILTER (WHERE fi.status IN ('collected','closed'))         AS settled_count,
            PERCENTILE_CONT(0.5) WITHIN GROUP (
              ORDER BY COALESCE(fi.collected_on, fi.closed_on) - fi.advanced_on)
-             FILTER (WHERE fi.status IN ('collected','closed'))                    AS median_dso
+             FILTER (WHERE fi.status IN ('collected','closed'))                    AS median_dso,
+           -- How old the open book against this agency is right now. Read next to
+           -- median_dso, this is the slowdown: an agency that normally settles in
+           -- 32 days carrying 130-day-old paper is the signal worth acting on.
+           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CURRENT_DATE - fi.advanced_on)
+             FILTER (WHERE fi.status IN ('pending','advanced') AND fi.advanced_on IS NOT NULL)
+                                                                                   AS median_open_age,
+           (
+             COUNT(*) FILTER (WHERE fi.status IN ('pending','advanced')) >= 3
+             AND COUNT(DISTINCT fi.company_id) FILTER (WHERE fi.status IN ('pending','advanced')) >= 2
+             AND PERCENTILE_CONT(0.5) WITHIN GROUP (
+                   ORDER BY COALESCE(fi.collected_on, fi.closed_on) - fi.advanced_on)
+                   FILTER (WHERE fi.status IN ('collected','closed')) IS NOT NULL
+             AND PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CURRENT_DATE - fi.advanced_on)
+                   FILTER (WHERE fi.status IN ('pending','advanced') AND fi.advanced_on IS NOT NULL)
+                 > GREATEST(
+                     PERCENTILE_CONT(0.5) WITHIN GROUP (
+                       ORDER BY COALESCE(fi.collected_on, fi.closed_on) - fi.advanced_on)
+                       FILTER (WHERE fi.status IN ('collected','closed')) * 1.5,
+                     PERCENTILE_CONT(0.5) WITHIN GROUP (
+                       ORDER BY COALESCE(fi.collected_on, fi.closed_on) - fi.advanced_on)
+                       FILTER (WHERE fi.status IN ('collected','closed')) + 15)
+           )                                                                       AS in_slowdown
       FROM factoring_debtors d
       LEFT JOIN factored_invoices fi ON fi.debtor_id = d.id
      GROUP BY d.id ORDER BY exposure DESC`);

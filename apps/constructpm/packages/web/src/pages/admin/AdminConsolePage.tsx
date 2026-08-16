@@ -285,12 +285,17 @@ export function AdminConsolePage() {
             ['outstanding_count', 'Open'], ['advanced_outstanding', 'Advanced', 'money'],
             ['credit_limit', 'Credit limit', 'money'],
           ]} />}
+        {/* Median DSO next to median open age is the slowdown, read directly:
+            an agency that normally settles in 32 days holding 130-day-old paper
+            is the thing to notice before it turns into a queue of declines. */}
         {tab === 'Debtors' && <SimpleTable
           queryKey="admin-debtors" url="/debtors"
           columns={[
-            ['legal_name', 'Debtor'], ['client_count', 'Clients'],
-            ['invoice_count', 'Open invoices'], ['exposure', 'Exposure', 'money'],
-            ['credit_limit', 'Credit limit', 'money'], ['risk_grade', 'Grade'],
+            ['legal_name', 'Agency'], ['client_count', 'Clients'],
+            ['invoice_count', 'Open'], ['exposure', 'Exposure', 'money'],
+            ['median_dso', 'Normal days', 'days'], ['median_open_age', 'Open age', 'days'],
+            ['in_slowdown', 'Slowdown', 'flag'],
+            ['credit_limit', 'Credit limit', 'money'],
           ]} />}
         {tab === 'Import' && <ImportPanel />}
         {tab === 'Audit' && <SimpleTable
@@ -388,10 +393,19 @@ function SimpleTable({ queryKey, url, columns }: {
           {(data ?? []).map((row: Record<string, string>, i: number) => (
             <tr key={row['id'] ?? i} className="hover:bg-slate-50">
               {columns.map(([key, label, kind]) => (
-                <td key={label} className={`table-cell ${kind === 'money' ? 'text-right tabular-nums' : ''}`}>
+                <td key={label} className={`table-cell ${
+                  kind === 'money' || kind === 'days' ? 'text-right tabular-nums' : ''}`}>
                   {row[key] == null ? '—'
                     : kind === 'money' ? formatCurrency(row[key])
                     : kind === 'date' ? formatDate(row[key])
+                    : kind === 'days' ? Math.round(Number(row[key]))
+                    : kind === 'flag' ? (
+                        // Only worth drawing attention when true; a table of "no"
+                        // chips is noise.
+                        String(row[key]) === 'true'
+                          ? <span className="badge-yellow">slowing</span>
+                          : <span className="text-slate-300">—</span>
+                      )
                     : String(row[key])}
                 </td>
               ))}

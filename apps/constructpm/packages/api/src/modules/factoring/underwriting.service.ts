@@ -155,6 +155,52 @@ export async function gatherInputs(
       WHERE status IN ('pending','advanced')`);
   const bookOpen = Number(book.rows[0]!.open);
 
+  // ── Agency slowdown ──────────────────────────────────────────────────────
+  // An agency counts as slow when its open advances are running materially older
+  // than its own settled history AND it is happening across more than one client.
+  // Both conditions matter: the multi-client test is what separates "this agency
+  // has slowed" from "this one contractor's invoices are not getting paid", and
+  // measuring against the agency's own history rather than a fixed number means
+  // a habitually slow agency is not permanently flagged.
+  const SLOWDOWN = `
+    SELECT fi.debtor_id,
+           COUNT(DISTINCT fi.company_id) FILTER (WHERE fi.status IN ('pending','advanced')) AS open_clients,
+           (
+             COUNT(*) FILTER (WHERE fi.status IN ('pending','advanced')) >= 3
+             AND COUNT(DISTINCT fi.company_id) FILTER (WHERE fi.status IN ('pending','advanced')) >= 2
+             AND PERCENTILE_CONT(0.5) WITHIN GROUP (
+                   ORDER BY COALESCE(fi.collected_on, fi.closed_on) - fi.advanced_on)
+                   FILTER (WHERE fi.status IN ('collected','closed')) IS NOT NULL
+             AND PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CURRENT_DATE - fi.advanced_on)
+                   FILTER (WHERE fi.status IN ('pending','advanced') AND fi.advanced_on IS NOT NULL)
+                 > GREATEST(
+                     PERCENTILE_CONT(0.5) WITHIN GROUP (
+                       ORDER BY COALESCE(fi.collected_on, fi.closed_on) - fi.advanced_on)
+                       FILTER (WHERE fi.status IN ('collected','closed')) * 1.5,
+                     PERCENTILE_CONT(0.5) WITHIN GROUP (
+                       ORDER BY COALESCE(fi.collected_on, fi.closed_on) - fi.advanced_on)
+                       FILTER (WHERE fi.status IN ('collected','closed')) + 15)
+           ) AS in_slowdown
+      FROM factored_invoices fi
+     GROUP BY fi.debtor_id`;
+
+  const slow = d
+    ? await client.query<{ in_slowdown: boolean; open_clients: string }>(
+        `WITH s AS (${SLOWDOWN}) SELECT in_slowdown, open_clients FROM s WHERE debtor_id = $1`, [d['id']])
+    : { rows: [] as { in_slowdown: boolean; open_clients: string }[] };
+
+  // How many of this client's impaired advances are explained by a slow agency.
+  const impairedSlow = await client.query<{ n: string }>(
+    `WITH s AS (${SLOWDOWN})
+     SELECT COUNT(*) AS n
+       FROM factored_invoices fi
+       JOIN s ON s.debtor_id = fi.debtor_id
+      WHERE fi.company_id = $1
+        AND fi.status IN ('pending','advanced')
+        AND fi.advanced_on IS NOT NULL
+        AND CURRENT_DATE - fi.advanced_on > $2
+        AND s.in_slowdown`, [request.company_id, policy.impairment_days]);
+
   const docs = await client.query<{ n: string }>(
     `SELECT COUNT(*) AS n FROM file_attachments
       WHERE entity_type = 'funding_request' AND entity_id = $1`, [request.id]);
@@ -189,6 +235,7 @@ export async function gatherInputs(
       settled_on_time: Number(h.on_time),
       settled_late: Number(h.late) + Number(cb.rows[0]!.n),
       impaired_count: Number(h.impaired),
+      impaired_in_slow_agencies: Number(impairedSlow.rows[0]!.n),
       open_exposure: Number(h.open_exposure),
       trailing_median_invoice: h.median_face === null ? null : Number(h.median_face),
       duplicate_open_invoice: Number(dupe.rows[0]!.n) > 0,
@@ -203,6 +250,8 @@ export async function gatherInputs(
       median_dso: debtorStats.median_dso,
       impaired_count: debtorStats.impaired,
       share_of_open_book_pct: bookOpen > 0 ? (debtorStats.open / bookOpen) * 100 : 0,
+      in_slowdown: Boolean(slow.rows[0]?.in_slowdown),
+      slowdown_clients_affected: Number(slow.rows[0]?.open_clients ?? 0),
     },
   };
 }

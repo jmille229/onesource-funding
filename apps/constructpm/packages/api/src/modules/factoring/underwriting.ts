@@ -72,6 +72,15 @@ export interface UnderwritingInputs {
     settled_late: number;
     /** Open advances aged beyond policy.impairment_days. */
     impaired_count: number;
+    /**
+     * Of those, how many sit with an agency currently in a measured slowdown.
+     *
+     * The distinction is the whole point: an advance running long because the
+     * agency has slowed is duration risk, and an advance running long because
+     * the client is not what they claimed is credit risk. They look identical in
+     * an aging report and are opposite in what they should trigger.
+     */
+    impaired_in_slow_agencies: number;
     /** Currently outstanding advance principal for this client. */
     open_exposure: number;
     /** Median face amount of this client's prior invoices; null when they have none. */
@@ -92,6 +101,14 @@ export interface UnderwritingInputs {
     impaired_count: number;
     /** This debtor's share of the whole open book, as a percentage. */
     share_of_open_book_pct: number;
+    /**
+     * The agency is paying materially slower than its own settled history, and
+     * it is happening to more than one client — so it is the agency, not any one
+     * contractor. Measured, not asserted.
+     */
+    in_slowdown: boolean;
+    /** How many clients the slowdown is currently affecting. */
+    slowdown_clients_affected: number;
   };
 }
 
@@ -201,11 +218,31 @@ export function underwrite(inputs: UnderwritingInputs, policy: UnderwritingPolic
   if (client.status !== 'active') {
     hard_stops.push({ code: 'client_not_active', label: `Client status is "${client.status}", not active.` });
   }
+  // An impaired advance means one of two very different things, and treating
+  // them the same is how a rules engine does real damage. When every impaired
+  // advance sits with an agency that is measurably slow across several clients,
+  // the client is not the problem — and refusing them is refusing the whole
+  // agency's book at the moment those contractors need cash most. One agency
+  // slowing down would otherwise auto-decline five clients holding 45% of the
+  // open book, by rule, with nobody looking.
+  //
+  // Impairment the agency does not explain is still a hard stop.
   if (client.impaired_count > 0) {
-    hard_stops.push({
-      code: 'client_impaired',
-      label: `Client has ${client.impaired_count} advance(s) outstanding beyond ${policy.impairment_days} days.`,
-    });
+    if (client.impaired_in_slow_agencies >= client.impaired_count) {
+      referrals.push({
+        code: 'client_impaired_agency_slowdown',
+        label: `${client.impaired_count} advance(s) past ${policy.impairment_days} days, all with agencies in a measured slowdown. ` +
+               `Duration risk rather than credit risk — confirm the invoices still stand.`,
+      });
+    } else {
+      hard_stops.push({
+        code: 'client_impaired',
+        label: `Client has ${client.impaired_count} advance(s) outstanding beyond ${policy.impairment_days} days` +
+               (client.impaired_in_slow_agencies > 0
+                 ? ` — ${client.impaired_count - client.impaired_in_slow_agencies} of them with agencies that are paying other clients normally.`
+                 : '.'),
+      });
+    }
   }
 
   // A second advance against an open invoice number is double-pledging — unless
@@ -266,8 +303,21 @@ export function underwrite(inputs: UnderwritingInputs, policy: UnderwritingPolic
       deduct('debtor_slow', `Agency median ${Math.round(debtor.median_dso)} days to pay.`, -5);
     }
   }
-  if (debtor.impaired_count > 0) {
-    deduct('debtor_impaired', `${debtor.impaired_count} advance(s) against this agency are impaired.`, -25);
+  // A slowdown is priced, not penalised. The fee schedule adds roughly a point
+  // per ten days outstanding, so a slow agency earns more, not less — the real
+  // cost is capital tied up rather than money lost. Small deduction to reflect
+  // that, and to make the condition visible on the decision.
+  if (debtor.in_slowdown) {
+    deduct('debtor_slowdown',
+      `Agency is in a measured slowdown, affecting ${debtor.slowdown_clients_affected} clients. ` +
+      `Expect a longer hold; the fee schedule accrues against it.`, -5);
+  }
+
+  // Impairment against an agency that is NOT broadly slow is a different matter:
+  // it is paying other people and not us.
+  if (debtor.impaired_count > 0 && !debtor.in_slowdown) {
+    deduct('debtor_impaired',
+      `${debtor.impaired_count} advance(s) against this agency are impaired while it pays others normally.`, -25);
   }
   if (debtor.share_of_open_book_pct > policy.debtor_concentration_pct) {
     deduct('debtor_concentration',
