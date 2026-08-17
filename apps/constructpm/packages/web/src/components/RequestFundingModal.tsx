@@ -117,7 +117,7 @@ export function RequestFundingModal({ invoice, onClose }: Props) {
               <Banknote className="w-5 h-5 text-brand-600" />
             </div>
             <div className="min-w-0">
-              <h3 className="truncate">Factor this invoice</h3>
+              <h3 className="truncate">Request funding</h3>
               <p className="text-sm text-slate-500 truncate">
                 {invoice.invoice_number} · {formatCurrency(invoice.total)}
               </p>
@@ -199,9 +199,9 @@ export function RequestFundingModal({ invoice, onClose }: Props) {
         {!isLoading && !isClient && !existingEnquiry && (
           <div className="p-5 space-y-4">
             <div className="rounded-md bg-slate-50 border border-slate-200 p-3">
-              <p className="text-sm text-slate-700 font-medium">Not set up for factoring yet</p>
+              <p className="text-sm text-slate-700 font-medium">Not set up for funding yet</p>
               <p className="text-sm text-slate-500 mt-0.5">
-                Factoring advances most of an invoice’s value now instead of waiting on your
+                OneSource advances most of an invoice’s value now instead of you waiting on your
                 customer. Tell us where to reach you and we’ll take it from there.
               </p>
             </div>
