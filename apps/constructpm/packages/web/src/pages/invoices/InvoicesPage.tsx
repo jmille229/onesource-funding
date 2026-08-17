@@ -279,7 +279,7 @@ export function InvoicesPage() {
                                   invoice_number: inv['invoice_number'] as string,
                                   total: inv['total'] as number,
                                 })}>
-                          <Banknote className="w-3.5 h-3.5" /> Factor
+                          <Banknote className="w-3.5 h-3.5" /> Request funding
                         </button>}
                   </td>
                   <td className="table-cell">
