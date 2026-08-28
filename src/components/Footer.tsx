@@ -58,13 +58,58 @@ const Footer = () => (
         ))}
       </div>
 
-      <div className="border-t border-white/10 mt-12 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <p className="text-primary-foreground/50 text-sm">
-          © 2026 One Source Funding. All rights reserved.
-        </p>
-        <div className="flex gap-6">
-          <a href="#" className="text-primary-foreground/50 text-sm hover:text-accent transition-colors">Privacy Policy</a>
-          <a href="#" className="text-primary-foreground/50 text-sm hover:text-accent transition-colors">Terms of Service</a>
+      {/*
+        Association membership sits in the legal bar rather than the link grid.
+        A trade body mark is a credibility signal, not navigation — it belongs
+        beside the copyright and policy links, which is where a prospect looks
+        when they are deciding whether we are a real counterparty.
+
+        The white chip is deliberate and load-bearing. This footer is dark navy
+        (--primary: 213 55% 22%) and the IFA mark is blue; placed straight onto
+        the background it reads as muddy and fails contrast. The OneSource logo
+        above solves that with `brightness-0 invert`, but recolouring another
+        organisation's mark is not ours to do — most associations require theirs
+        to appear unaltered on a light background. The chip gives it exactly that
+        while leaving the file untouched: fixed height, auto width, no filters,
+        no crop.
+      */}
+      <div className="border-t border-white/10 mt-12 pt-8 flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+          <span className="text-primary-foreground/50 text-xs uppercase tracking-wider">
+            Proud member of
+          </span>
+          <a
+            href="https://www.factoring.org/"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="International Factoring Association — opens in a new tab"
+            className="inline-flex items-center rounded-lg bg-white px-4 py-2.5 transition-shadow
+                       hover:shadow-lg focus-visible:outline-none focus-visible:ring-2
+                       focus-visible:ring-accent focus-visible:ring-offset-2
+                       focus-visible:ring-offset-primary"
+          >
+            <img
+              src="/ifa-member.png"
+              alt="International Factoring Association"
+              // The IFA mark is a lockup: "IFA" over the association name in
+              // small caps. Sized so that fine print stays legible — below about
+              // 100px wide the second line turns to mush. Height-driven with
+              // w-auto, so the aspect ratio comes from the file, never from here.
+              className="h-12 sm:h-14 w-auto"
+              loading="lazy"
+              decoding="async"
+            />
+          </a>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
+          <p className="text-primary-foreground/50 text-sm">
+            © 2026 One Source Funding. All rights reserved.
+          </p>
+          <div className="flex gap-6">
+            <a href="#" className="text-primary-foreground/50 text-sm hover:text-accent transition-colors">Privacy Policy</a>
+            <a href="#" className="text-primary-foreground/50 text-sm hover:text-accent transition-colors">Terms of Service</a>
+          </div>
         </div>
       </div>
     </div>
