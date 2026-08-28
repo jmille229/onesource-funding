@@ -89,7 +89,11 @@ const Footer = () => (
                        focus-visible:ring-offset-primary"
           >
             <img
-              src="/ifa-member.png"
+              // Capital IFA — matches the file in public/ exactly. Cloudflare
+              // serves assets case-sensitively, so a lowercase path here would
+              // 404 in production while still resolving on a case-insensitive
+              // macOS checkout.
+              src="/IFA-member.png"
               alt="International Factoring Association"
               // The IFA mark is a lockup: "IFA" over the association name in
               // small caps. Sized so that fine print stays legible — below about
