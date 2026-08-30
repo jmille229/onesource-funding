@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Shield, Loader2, LogOut, Upload, AlertTriangle } from 'lucide-react';
 import { adminApi, useAdminStore, hasAdminToken } from '../../lib/admin-api';
 import { formatCurrency, formatDate } from '../../lib/api';
+import { UnderwritingQueue } from './UnderwritingQueue';
 
 // ─── Login ────────────────────────────────────────────────────────────────────
 function AdminLogin() {
@@ -155,65 +156,167 @@ function FundForm({ onDone }: { onDone: () => void }) {
 }
 
 // ─── CSV import ───────────────────────────────────────────────────────────────
+// Paste in the Advance Book tab from the operator workbook. The server accepts
+// the workbook's actual column names — no reshaping required. Header order,
+// case and light punctuation drift (invoice_number vs Invoice #) all match.
+//
+// Two columns matter most: rows with Date Paid Back + Amount Received are
+// imported as fund + collect in one shot. Rows with either alone are rejected
+// as almost certainly a workbook typo. Fees, Days and APR are ignored — the fee
+// schedule computes those, and letting a sheet override a computed number is
+// how ledgers get out of sync.
+
+interface ImportPreviewRow {
+  row: number; borrower: string; creditor: string; invoice_number: string;
+  face_amount: number; advanced_on: string; will_settle: boolean;
+}
+interface ImportPreview {
+  would_apply: number;
+  errors: { row: number; message: string }[];
+  preview: ImportPreviewRow[];
+}
+
+const ADVANCE_BOOK_HEADER =
+  "Borrower,Name,Creditor,Sales person,Project,Adv Date,Invoice #," +
+  "Total Invoice,Total Advanced,Contract Ready,Invoice Ready,Check #," +
+  "Date Paid Back,Amount Received,Fees,Bal Due,Prove,Days," +
+  "Days (Pending),#Years,APR,Email,First Name,Notes";
+
 function ImportPanel() {
   const qc = useQueryClient();
   const [csv, setCsv] = useState('');
-  const [preview, setPreview] = useState<{
-    would_apply: number; errors: { row: number; message: string }[];
-  } | null>(null);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
 
   const run = useMutation({
-    mutationFn: (dry: boolean) => adminApi.post('/invoices/import', { csv, dry_run: dry }).then(r => r.data.data),
-    onSuccess: (data, dry) => {
+    mutationFn: (dry: boolean) =>
+      adminApi.post('/invoices/import', { csv, dry_run: dry }).then(r => r.data.data),
+    onSuccess: (data: ImportPreview & { applied?: number }, dry) => {
       if (dry) { setPreview(data); return; }
       toast.success(`Imported ${data.applied} advances`);
       setCsv(''); setPreview(null);
       qc.invalidateQueries({ queryKey: ['admin-invoices'] });
     },
-    onError: () => toast.error('Import failed'),
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast.error(e.response?.data?.message ?? 'Import failed'),
   });
 
+  const willSettle = preview?.preview.filter((p) => p.will_settle).length ?? 0;
+
   return (
-    <div className="card p-4 space-y-3">
-      <h3>Import advances</h3>
-      <p className="text-sm text-slate-500">
-        Columns: <code className="text-xs">company_id, debtor_id, invoice_number, face_amount,
-        advanced_on, invoice_due_on, fee_schedule_id</code>. Nothing is written unless every row
-        validates — a partly applied batch of advances is worse than none.
-      </p>
+    <div className="card p-4 space-y-4">
+      <div>
+        <h3>Import advances from the workbook</h3>
+        <p className="text-sm text-slate-500 mt-1">
+          Paste the header row and any number of rows from the Advance Book tab.
+          Nothing is written unless every row validates.
+        </p>
+      </div>
+
+      {/* Column reference. The full header string is copy-and-paste so a first-time
+          operator can hand their sheet the exact order the exporter produces. */}
+      <details className="rounded-lg border border-slate-200 bg-slate-50">
+        <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-slate-700">
+          Expected columns (Advance Book)
+        </summary>
+        <div className="px-3 pb-3 pt-1 space-y-2 text-xs text-slate-600">
+          <p>
+            <strong>Required per row:</strong> Borrower, Creditor, Invoice #, Total Invoice, Adv Date.
+          </p>
+          <p>
+            <strong>Optional but preserved:</strong> Sales person, Project, Contract Ready, Invoice Ready, Notes —
+            folded into the advance's Notes so exports round-trip.
+          </p>
+          <p>
+            <strong>Rows that also carry a repayment:</strong> Date Paid Back + Amount Received (and Check # if any)
+            import as an advance that immediately collects.
+          </p>
+          <p>
+            <strong>Ignored on purpose:</strong> Fees, Bal Due, Days, Days (Pending), #Years, APR.
+            These are computed from the fee schedule; importing them would let a wrong number in
+            the sheet silently overwrite the right one.
+          </p>
+          <p className="pt-1">
+            <code className="text-[11px] break-all">{ADVANCE_BOOK_HEADER}</code>
+          </p>
+        </div>
+      </details>
+
       <textarea
-        className="input font-mono text-xs" rows={8} value={csv}
+        className="input font-mono text-xs" rows={9} value={csv}
         onChange={(e) => { setCsv(e.target.value); setPreview(null); }}
-        placeholder="company_id,debtor_id,invoice_number,face_amount,advanced_on"
+        placeholder="Paste the header row, then the advance rows below it"
+        aria-label="CSV pasted from the Advance Book tab"
       />
+
       <div className="flex flex-wrap gap-2">
         <button className="btn-secondary" disabled={!csv || run.isPending}
                 onClick={() => run.mutate(true)}>
           <Upload className="w-4 h-4" /> Validate
         </button>
         <button className="btn-primary"
-                disabled={!preview || preview.errors.length > 0 || run.isPending}
+                disabled={!preview || preview.errors.length > 0 || preview.would_apply === 0 || run.isPending}
                 onClick={() => run.mutate(false)}>
-          Apply {preview ? `${preview.would_apply} rows` : ''}
+          Apply {preview ? `${preview.would_apply} row${preview.would_apply === 1 ? '' : 's'}` : ''}
         </button>
       </div>
-      {preview && (
-        <div className={`p-3 rounded-md text-sm ${
-          preview.errors.length ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'}`}>
-          {preview.errors.length === 0 ? (
-            <p className="text-green-800">{preview.would_apply} rows valid and ready to apply.</p>
-          ) : (
-            <>
-              <p className="text-red-800 font-medium flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4" /> {preview.errors.length} rows rejected — nothing was written
-              </p>
-              <ul className="mt-2 space-y-0.5 text-red-700 text-xs max-h-40 overflow-y-auto">
-                {preview.errors.slice(0, 25).map((e) => (
-                  <li key={e.row}>Row {e.row}: {e.message}</li>
-                ))}
-              </ul>
-            </>
+
+      {preview && preview.errors.length === 0 && preview.would_apply > 0 && (
+        <div className="p-3 rounded-md border border-green-200 bg-green-50 space-y-2">
+          <p className="text-green-800 text-sm">
+            {preview.would_apply} row{preview.would_apply === 1 ? '' : 's'} valid.{" "}
+            {willSettle > 0 && `${willSettle} will fund and settle in one step.`}
+          </p>
+          {preview.preview.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-green-900 border-b border-green-200">
+                    <th className="py-1 pr-3">Row</th><th className="py-1 pr-3">Borrower</th>
+                    <th className="py-1 pr-3">Agency</th><th className="py-1 pr-3">Invoice #</th>
+                    <th className="py-1 pr-3 text-right tabular-nums">Face</th>
+                    <th className="py-1 pr-3">Adv date</th><th className="py-1">Settled?</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-green-100">
+                  {preview.preview.map((p) => (
+                    <tr key={p.row} className="text-slate-800">
+                      <td className="py-1 pr-3 tabular-nums">{p.row}</td>
+                      <td className="py-1 pr-3">{p.borrower}</td>
+                      <td className="py-1 pr-3">{p.creditor}</td>
+                      <td className="py-1 pr-3 font-mono">{p.invoice_number}</td>
+                      <td className="py-1 pr-3 text-right tabular-nums">
+                        ${p.face_amount.toLocaleString()}
+                      </td>
+                      <td className="py-1 pr-3 tabular-nums">{p.advanced_on}</td>
+                      <td className="py-1">{p.will_settle ? 'yes' : ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {preview.would_apply > preview.preview.length && (
+                <p className="text-xs text-slate-500 mt-1">
+                  Showing first {preview.preview.length} of {preview.would_apply} rows.
+                </p>
+              )}
+            </div>
           )}
+        </div>
+      )}
+
+      {preview && preview.errors.length > 0 && (
+        <div className="p-3 rounded-md border border-red-200 bg-red-50">
+          <p className="text-red-800 font-medium flex items-center gap-2 text-sm">
+            <AlertTriangle className="w-4 h-4" />
+            {preview.errors.length} row{preview.errors.length === 1 ? '' : 's'} rejected — nothing was written
+          </p>
+          <ul className="mt-2 space-y-0.5 text-red-700 text-xs max-h-48 overflow-y-auto">
+            {preview.errors.slice(0, 40).map((e) => (
+              <li key={e.row}><span className="font-mono">Row {e.row}:</span> {e.message}</li>
+            ))}
+            {preview.errors.length > 40 && (
+              <li className="italic">… and {preview.errors.length - 40} more.</li>
+            )}
+          </ul>
         </div>
       )}
     </div>
@@ -221,12 +324,14 @@ function ImportPanel() {
 }
 
 // ─── Console ──────────────────────────────────────────────────────────────────
-const TABS = ['Advances', 'Clients', 'Debtors', 'Import', 'Audit'] as const;
+// Requests leads: it is the only tab with work waiting on it, and the queue is
+// where the underwriting engine actually earns its keep.
+const TABS = ['Requests', 'Advances', 'Clients', 'Debtors', 'Import', 'Audit'] as const;
 
 export function AdminConsolePage() {
   const email = useAdminStore((s) => s.email);
   const logout = useAdminStore((s) => s.logout);
-  const [tab, setTab] = useState<(typeof TABS)[number]>('Advances');
+  const [tab, setTab] = useState<(typeof TABS)[number]>('Requests');
   const [funding, setFunding] = useState(false);
   const qc = useQueryClient();
 
@@ -262,6 +367,7 @@ export function AdminConsolePage() {
       </nav>
 
       <main className="max-w-7xl mx-auto page">
+        {tab === 'Requests' && <UnderwritingQueue />}
         {tab === 'Advances' && (
           <>
             <div className="page-header">
@@ -281,12 +387,17 @@ export function AdminConsolePage() {
             ['outstanding_count', 'Open'], ['advanced_outstanding', 'Advanced', 'money'],
             ['credit_limit', 'Credit limit', 'money'],
           ]} />}
+        {/* Median DSO next to median open age is the slowdown, read directly:
+            an agency that normally settles in 32 days holding 130-day-old paper
+            is the thing to notice before it turns into a queue of declines. */}
         {tab === 'Debtors' && <SimpleTable
           queryKey="admin-debtors" url="/debtors"
           columns={[
-            ['legal_name', 'Debtor'], ['client_count', 'Clients'],
-            ['invoice_count', 'Open invoices'], ['exposure', 'Exposure', 'money'],
-            ['credit_limit', 'Credit limit', 'money'], ['risk_grade', 'Grade'],
+            ['legal_name', 'Agency'], ['client_count', 'Clients'],
+            ['invoice_count', 'Open'], ['exposure', 'Exposure', 'money'],
+            ['median_dso', 'Normal days', 'days'], ['median_open_age', 'Open age', 'days'],
+            ['in_slowdown', 'Slowdown', 'flag'],
+            ['credit_limit', 'Credit limit', 'money'],
           ]} />}
         {tab === 'Import' && <ImportPanel />}
         {tab === 'Audit' && <SimpleTable
@@ -384,10 +495,19 @@ function SimpleTable({ queryKey, url, columns }: {
           {(data ?? []).map((row: Record<string, string>, i: number) => (
             <tr key={row['id'] ?? i} className="hover:bg-slate-50">
               {columns.map(([key, label, kind]) => (
-                <td key={label} className={`table-cell ${kind === 'money' ? 'text-right tabular-nums' : ''}`}>
+                <td key={label} className={`table-cell ${
+                  kind === 'money' || kind === 'days' ? 'text-right tabular-nums' : ''}`}>
                   {row[key] == null ? '—'
                     : kind === 'money' ? formatCurrency(row[key])
                     : kind === 'date' ? formatDate(row[key])
+                    : kind === 'days' ? Math.round(Number(row[key]))
+                    : kind === 'flag' ? (
+                        // Only worth drawing attention when true; a table of "no"
+                        // chips is noise.
+                        String(row[key]) === 'true'
+                          ? <span className="badge-yellow">slowing</span>
+                          : <span className="text-slate-300">—</span>
+                      )
                     : String(row[key])}
                 </td>
               ))}

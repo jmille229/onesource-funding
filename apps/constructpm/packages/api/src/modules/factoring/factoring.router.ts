@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { readPool, createRlsClient, withTransaction } from '../../lib/db.js';
 import { notify, OPS_INBOX } from '../../lib/mailer.js';
 import { asyncHandler, requireRole, validate } from '../../middleware/index.js';
+import { exposureLimit, type UnderwritingPolicy } from './underwriting.js';
+import { scoreRequestInBackground } from './underwriting.service.js';
 
 export const factoringRouter = Router();
 
@@ -76,11 +78,50 @@ factoringRouter.get('/summary', requireRole(...FINANCE_ROLES), asyncHandler(asyn
       ) AS approaching_recourse
     FROM factored_invoices`);
 
+  // The graduated funding limit, computed live from the tenant's own settled
+  // history. The four policy numbers this needs are granted to the tenant role
+  // on purpose (V006): showing a contractor that repaying on time raises their
+  // ceiling is the mechanism that earns repeat funding. The scoring thresholds
+  // stay hidden — the client sees the number, never the reasoning.
+  const policy = await db.query<{ starting_limit: string; limit_step: string; max_limit: string; on_time_days: string }>(
+    `SELECT starting_limit, limit_step, max_limit, on_time_days
+       FROM underwriting_policy ORDER BY version DESC LIMIT 1`);
+
+  let exposure: { limit: number; current: number; headroom: number } | null = null;
+  if (policy.rows[0]) {
+    const p = policy.rows[0];
+    const settled = await db.query<{ on_time: string; late: string; open_exposure: string }>(
+      `SELECT
+         COUNT(*) FILTER (
+           WHERE status IN ('collected','closed')
+             AND COALESCE(collected_on, closed_on) - advanced_on <= $1) AS on_time,
+         COUNT(*) FILTER (
+           WHERE status IN ('collected','closed')
+             AND COALESCE(collected_on, closed_on) - advanced_on > $1) AS late,
+         COALESCE(SUM(advance_amount) FILTER (WHERE status IN ('pending','advanced')), 0) AS open_exposure
+       FROM factored_invoices WHERE status <> 'charged_back'`, [Number(p.on_time_days)]);
+    const s = settled.rows[0]!;
+    const limit = exposureLimit({
+      credit_limit_override: client.rows[0].credit_limit === null ? null : Number(client.rows[0].credit_limit),
+      settled_on_time: Number(s.on_time),
+      settled_late: Number(s.late),
+    }, {
+      starting_limit: Number(p.starting_limit),
+      limit_step: Number(p.limit_step),
+      max_limit: Number(p.max_limit),
+    } as UnderwritingPolicy);
+    const current = Number(s.open_exposure);
+    exposure = { limit, current, headroom: Math.max(0, limit - current) };
+  }
+
   res.json({
     data: {
       enabled: true,
       status: client.rows[0].status,
       credit_limit: client.rows[0].credit_limit,
+      funding_limit: exposure?.limit ?? null,
+      funding_used: exposure?.current ?? null,
+      funding_available: exposure?.headroom ?? null,
       ...totals.rows[0],
     },
   });
@@ -214,6 +255,11 @@ factoringRouter.post(
       }
       throw err;
     });
+
+    // Score it. Best-effort like the mail below: the request is committed, and
+    // an unscored request just reaches the operator queue without a
+    // recommendation rather than failing the client's submission.
+    scoreRequestInBackground(created['id'] as string);
 
     // Best-effort; the request is already committed.
     void notify({
