@@ -27,6 +27,97 @@
  * and there is no story for reconciling the difference.
  */
 
+// ─── Delimited-text parser ───────────────────────────────────────────────────
+// Accepts BOTH comma-separated (a downloaded .csv) and tab-separated (what
+// pasting rows out of Google Sheets or Excel actually gives you). Auto-detects
+// by counting tabs vs commas on the header line — whichever wins is the
+// delimiter for the whole file. This is what "the import is not working" was:
+// a tab-separated paste being fed to a comma-only parser was silently lumping
+// every column into cell 0, and every row failed with the same cryptic error.
+//
+// Also handles quoted cells that contain the delimiter or a newline (the Notes
+// column is the practical culprit here), and strips a UTF-8 BOM that Excel's
+// "Save as CSV UTF-8" export prepends.
+
+const BOM = "﻿";
+
+function detectDelimiter(headerLine: string): "," | "\t" {
+  const tabs = (headerLine.match(/\t/g) ?? []).length;
+  const commas = (headerLine.match(/,/g) ?? []).length;
+  return tabs > commas ? "\t" : ",";
+}
+
+/**
+ * Splits delimited text into rows of cells with RFC-4180-style quoting:
+ * a cell wrapped in `"` may contain the delimiter, embedded newlines, and
+ * doubled quotes (`""`) that decode to a single `"`. Trailing blank lines
+ * are dropped so an operator's stray Enter at the bottom of a paste does not
+ * produce a row of empty errors.
+ */
+function splitDelimited(text: string, delim: "," | "\t"): string[][] {
+  const rows: string[][] = [];
+  let cur = "";
+  let row: string[] = [];
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { cur += '"'; i++; } else { inQuotes = false; }
+      } else {
+        cur += ch;
+      }
+      continue;
+    }
+    if (ch === '"') { inQuotes = true; continue; }
+    if (ch === delim) { row.push(cur); cur = ""; continue; }
+    if (ch === "\n" || ch === "\r") {
+      // Consume a \r\n pair as one newline.
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(cur); cur = "";
+      rows.push(row); row = [];
+      continue;
+    }
+    cur += ch;
+  }
+  // Flush the tail cell/row if the input did not end with a newline.
+  if (cur !== "" || row.length > 0) { row.push(cur); rows.push(row); }
+  // Trim trailing all-blank rows.
+  while (rows.length > 0 && rows[rows.length - 1]!.every((c) => c.trim() === "")) {
+    rows.pop();
+  }
+  return rows;
+}
+
+/**
+ * Parses pasted-or-uploaded delimited text against the workbook's Advance Book
+ * columns. Returns row objects keyed by canonical header; unknown columns are
+ * dropped. Empty input yields [].
+ */
+export function parseDelimited(raw: string): Record<string, string>[] {
+  let text = raw;
+  if (text.startsWith(BOM)) text = text.slice(1);
+  if (text.trim() === "") return [];
+  // Peek at the first line only for delimiter detection — the rest of the file
+  // may contain embedded newlines inside quoted cells and cannot be trusted to
+  // split cleanly by newline yet.
+  const firstBreak = text.search(/\r?\n/);
+  const headerLine = firstBreak === -1 ? text : text.slice(0, firstBreak);
+  const delim = detectDelimiter(headerLine);
+  const rows = splitDelimited(text, delim);
+  if (rows.length < 2) return [];
+  const headers = rows[0]!.map((h) => h.trim().replace(/^"|"$/g, ""));
+  const canonical = mapHeaders(headers);
+  return rows.slice(1).map((cells) => {
+    const out: Record<string, string> = {};
+    for (let i = 0; i < canonical.length; i++) {
+      const key = canonical[i];
+      if (key) out[key] = (cells[i] ?? "").trim();
+    }
+    return out;
+  });
+}
+
 /** The workbook's actual header row. Match is case- and space-insensitive. */
 export const ADVANCE_BOOK_COLUMNS = [
   "Borrower", "Name", "Creditor", "Sales person", "Project",

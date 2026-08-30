@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Shield, Loader2, LogOut, Upload, AlertTriangle } from 'lucide-react';
@@ -186,6 +186,25 @@ function ImportPanel() {
   const qc = useQueryClient();
   const [csv, setCsv] = useState('');
   const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [uploadedName, setUploadedName] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // File upload path: the operator downloads the Advance Book as .csv/.tsv/.txt
+  // and picks it here, so they never have to worry about clipboard format or
+  // whether their paste kept the header row. The backend parser auto-detects
+  // comma vs tab, so we don't ask the operator to say which shape they picked.
+  const onFile = (f: File | null) => {
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === 'string' ? reader.result : '';
+      setCsv(text);
+      setPreview(null);
+      setUploadedName(f.name);
+    };
+    reader.onerror = () => toast.error(`Could not read ${f.name}`);
+    reader.readAsText(f);
+  };
 
   const run = useMutation({
     mutationFn: (dry: boolean) =>
@@ -193,7 +212,7 @@ function ImportPanel() {
     onSuccess: (data: ImportPreview & { applied?: number }, dry) => {
       if (dry) { setPreview(data); return; }
       toast.success(`Imported ${data.applied} advances`);
-      setCsv(''); setPreview(null);
+      setCsv(''); setPreview(null); setUploadedName(null);
       qc.invalidateQueries({ queryKey: ['admin-invoices'] });
     },
     onError: (e: { response?: { data?: { message?: string } } }) =>
@@ -207,8 +226,9 @@ function ImportPanel() {
       <div>
         <h3>Import advances from the workbook</h3>
         <p className="text-sm text-slate-500 mt-1">
-          Paste the header row and any number of rows from the Advance Book tab.
-          Nothing is written unless every row validates.
+          Upload a downloaded .csv/.tsv, or paste rows straight from the
+          Advance Book tab (comma- or tab-separated — either works). Nothing is
+          written unless every row validates.
         </p>
       </div>
 
@@ -241,17 +261,39 @@ function ImportPanel() {
         </div>
       </details>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          ref={fileRef} type="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
+          className="hidden"
+          onChange={(e) => {
+            onFile(e.target.files?.[0] ?? null);
+            // Reset so picking the same file twice still fires onChange.
+            if (fileRef.current) fileRef.current.value = '';
+          }}
+        />
+        <button type="button" className="btn-secondary"
+                onClick={() => fileRef.current?.click()}>
+          <Upload className="w-4 h-4" /> Choose file
+        </button>
+        {uploadedName && (
+          <span className="text-xs text-slate-600">
+            Loaded <span className="font-mono">{uploadedName}</span>
+          </span>
+        )}
+        <span className="text-xs text-slate-400">— or paste below —</span>
+      </div>
+
       <textarea
         className="input font-mono text-xs" rows={9} value={csv}
-        onChange={(e) => { setCsv(e.target.value); setPreview(null); }}
+        onChange={(e) => { setCsv(e.target.value); setPreview(null); setUploadedName(null); }}
         placeholder="Paste the header row, then the advance rows below it"
-        aria-label="CSV pasted from the Advance Book tab"
+        aria-label="Rows pasted from the Advance Book tab"
       />
 
       <div className="flex flex-wrap gap-2">
         <button className="btn-secondary" disabled={!csv || run.isPending}
                 onClick={() => run.mutate(true)}>
-          <Upload className="w-4 h-4" /> Validate
+          Validate
         </button>
         <button className="btn-primary"
                 disabled={!preview || preview.errors.length > 0 || preview.would_apply === 0 || run.isPending}
