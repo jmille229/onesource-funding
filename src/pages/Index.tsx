@@ -1,6 +1,5 @@
 import TopBar from "@/components/TopBar";
 import Navbar from "@/components/Navbar";
-import BrandMasthead from "@/components/BrandMasthead";
 import HeroSection from "@/components/HeroSection";
 import GovernmentBanner from "@/components/GovernmentBanner";
 import InfoCards from "@/components/InfoCards";
@@ -18,7 +17,10 @@ const Index = () => (
   <div className="min-h-screen">
     <TopBar />
     <Navbar />
-    <BrandMasthead />
+    {/* BrandMasthead was a second, full-viewport hero stacked above this one. It
+        carried no call to action, duplicated the <h1>, and pushed every
+        conversion path below the fold. Its message now lives in HeroSection.
+        The component file is still in the repo if any of it is wanted back. */}
     <main>
       <HeroSection />
       <GovernmentBanner />
