@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
-import { Facebook, Twitter, Linkedin, Instagram, Youtube } from "lucide-react";
+import { Facebook, Twitter, Linkedin, Instagram, Youtube, Mail, Phone } from "lucide-react";
+import { CONTACT } from "@/lib/contact";
 
 const footerLinks = {
   Company: ["About Us", "Our Team", "Careers", "Contact Us"],
@@ -8,9 +9,16 @@ const footerLinks = {
   Resources: ["Blog", "FAQs", "Calculator", "Case Studies"],
 };
 
-/** Footer labels that now have a real destination. */
-const FOOTER_ROUTES: Record<string, string> = {
-  "How It Works": "/how-it-works",
+/**
+ * Footer labels that resolve to a real destination.
+ *
+ * Route (internal navigation) or href (external / mailto / tel) — either
+ * ends the dead href="#" for that entry. Everything else stays as-is until it
+ * has a real page.
+ */
+const FOOTER_ROUTES: Record<string, { route?: string; href?: string }> = {
+  "How It Works": { route: "/how-it-works" },
+  "Contact Us":   { href:  `mailto:${CONTACT.email}` },
 };
 
 const socialLinks = [
@@ -30,9 +38,44 @@ const Footer = () => (
           <div className="flex items-center gap-2 mb-4">
             <img src="/logo.png" alt="One Source Funding" className="h-12 brightness-0 invert" />
           </div>
-          <p className="text-primary-foreground/60 text-sm leading-relaxed mb-6">
+          <p className="text-primary-foreground/60 text-sm leading-relaxed mb-5">
             Invoice factoring built exclusively for U.S. government contractors.
           </p>
+
+          {/* Contact block. Both channels visible together because they answer
+              different questions: phone is for the buyer who wants a person,
+              email is for the buyer who wants a paper trail. Not a "Contact"
+              heading — the icons carry the meaning without one, and screen
+              readers hear the aria-labels. */}
+          <ul className="space-y-2 mb-5 not-italic" role="list">
+            <li>
+              <a
+                href={`tel:${CONTACT.phoneTel}`}
+                aria-label={`Call ${CONTACT.phone}`}
+                className="flex items-center gap-2 text-primary-foreground/80 text-sm
+                           hover:text-accent transition-colors focus-visible:outline-none
+                           focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2
+                           focus-visible:ring-offset-primary rounded"
+              >
+                <Phone className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{CONTACT.phone}</span>
+              </a>
+            </li>
+            <li>
+              <a
+                href={`mailto:${CONTACT.email}`}
+                aria-label={`Email ${CONTACT.email}`}
+                className="flex items-center gap-2 text-primary-foreground/80 text-sm
+                           hover:text-accent transition-colors focus-visible:outline-none
+                           focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2
+                           focus-visible:ring-offset-primary rounded break-all"
+              >
+                <Mail className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{CONTACT.email}</span>
+              </a>
+            </li>
+          </ul>
+
           <div className="flex gap-3">
             {socialLinks.map((s) => (
               <a
@@ -54,14 +97,17 @@ const Footer = () => (
             <ul className="space-y-2.5">
               {links.map((link) => {
                 // Most of these are placeholders awaiting real pages; the ones
-                // that exist get routed rather than left as dead "#" links.
-                const route = FOOTER_ROUTES[link];
+                // that exist get routed (internal) or href'd (mailto / external)
+                // rather than left as dead "#" links.
+                const dest = FOOTER_ROUTES[link];
                 const cls = "text-primary-foreground/60 text-sm hover:text-accent transition-colors";
                 return (
                   <li key={link}>
-                    {route
-                      ? <Link to={route} className={cls}>{link}</Link>
-                      : <a href="#" className={cls}>{link}</a>}
+                    {dest?.route
+                      ? <Link to={dest.route} className={cls}>{link}</Link>
+                      : dest?.href
+                        ? <a href={dest.href} className={cls}>{link}</a>
+                        : <a href="#" className={cls}>{link}</a>}
                   </li>
                 );
               })}
