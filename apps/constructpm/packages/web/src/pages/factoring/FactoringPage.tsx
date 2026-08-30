@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Banknote, AlertTriangle, PiggyBank, Clock, FolderKanban } from 'lucide-react';
 import { api, formatCurrency, formatDate } from '../../lib/api';
+import { factoredInvoiceRef } from '@constructpm/shared';
 
 const STATUS_BADGE: Record<string, string> = {
   pending: 'badge-gray',
@@ -14,7 +15,7 @@ const STATUS_BADGE: Record<string, string> = {
 
 interface Advance {
   id: string;
-  invoice_number: string;
+  invoice_number: string | null;
   debtor_name: string;
   face_amount: string;
   advance_amount: string;
@@ -251,7 +252,7 @@ export function FactoringPage() {
             )}
             {rows.map((a) => (
               <tr key={a.id} className="hover:bg-slate-50">
-                <td className="table-cell font-medium">{a.invoice_number}</td>
+                <td className="table-cell font-medium font-mono">{factoredInvoiceRef(a)}</td>
                 <td className="table-cell">{a.debtor_name}</td>
                 <td className="table-cell">
                   {a.job_id ? (

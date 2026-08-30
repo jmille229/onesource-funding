@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  mapHeaders, parseMoney, parseDate, invoiceNumberOrThrow, toAdvancePayload,
+  mapHeaders, parseMoney, parseDate, invoiceNumberOrNull, toAdvancePayload,
   parseDelimited,
 } from './import-map.js';
 
@@ -128,16 +128,24 @@ describe('parseDate', () => {
   });
 });
 
-describe('invoiceNumberOrThrow', () => {
+describe('invoiceNumberOrNull', () => {
   it('accepts every real invoice number that appears in the book', () => {
     for (const v of ['PCDC-10th-9', 'APP # 601328-5', '221407', 'INV-0042']) {
-      expect(invoiceNumberOrThrow(v)).toBe(v);
+      expect(invoiceNumberOrNull(v)).toBe(v);
     }
   });
 
-  it('rejects the placeholders that actually caused losses', () => {
-    for (const v of ['-', ' - ', '', 'N/A', 'na', 'TBD', 'pending', '?']) {
-      expect(() => invoiceNumberOrThrow(v)).toThrow(/Invoice/);
+  it('returns null for a blank cell — a missing number is allowed now, the UUID id identifies the row', () => {
+    for (const v of ['', '   ', undefined]) {
+      expect(invoiceNumberOrNull(v)).toBeNull();
+    }
+  });
+
+  it('still rejects the placeholders that actually caused losses', () => {
+    // Blank ≠ placeholder. A cell spelled "-" or "N/A" is actively lying and
+    // both such advances in the historical book were unpaid.
+    for (const v of ['-', ' - ', 'N/A', 'na', 'TBD', 'pending', '?']) {
+      expect(() => invoiceNumberOrNull(v)).toThrow(/placeholder/);
     }
   });
 });
@@ -181,6 +189,12 @@ describe('toAdvancePayload', () => {
       .toThrow(/both be filled or both be blank/);
     expect(() => toAdvancePayload({ ...base, "Amount Received": "9600" }))
       .toThrow(/both be filled or both be blank/);
+  });
+
+  it('accepts a row with a blank invoice number — the UUID id identifies the record', () => {
+    const p = toAdvancePayload({ ...base, "Invoice #": "" });
+    expect(p.invoice_number).toBeNull();
+    expect(p.borrower).toBe("RNV Electrical");
   });
 
   it('rejects the historical bad row — BDFS/NKCDC with Invoice # = "-"', () => {

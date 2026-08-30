@@ -253,14 +253,18 @@ export function parseDate(raw: string | undefined, field: string): string | null
 }
 
 /**
- * Placeholder-invoice detector, same logic the underwriting engine uses. Kept
- * here explicitly rather than imported because the import step wants a slightly
- * different error message ("blank invoice number in row 42") than the engine
- * gives ("both such advances in the book were unpaid").
+ * Placeholder-invoice detector, same policy the underwriting engine uses.
+ *
+ * Blank ≠ placeholder. A missing invoice number means the operator hasn't
+ * entered one yet (or the agency hasn't issued it) — the row is still valid,
+ * and the factored_invoices UUID serves as its stable identifier. A cell
+ * spelled "-" or "N/A" is different: it's actively lying about having a
+ * number, and both such advances in the historical book were unpaid, so we
+ * still refuse them.
  */
-const PLACEHOLDER_INVOICE = new Set(["", "-", "--", "n/a", "na", "none", "tbd", "pending", "?"]);
-export function invoiceNumberOrThrow(raw: string | undefined): string {
-  if (isBlank(raw)) throw new Error("Invoice #: missing");
+const PLACEHOLDER_INVOICE = new Set(["-", "--", "n/a", "na", "none", "tbd", "pending", "?"]);
+export function invoiceNumberOrNull(raw: string | undefined): string | null {
+  if (isBlank(raw)) return null;
   const s = raw!.trim();
   if (PLACEHOLDER_INVOICE.has(s.toLowerCase())) {
     throw new Error(`Invoice #: "${s}" is a placeholder, not a real invoice number`);
@@ -280,7 +284,9 @@ export interface AdvanceRowPayload {
   borrower: string;
   /** Whole agency name from the workbook. */
   creditor: string;
-  invoice_number: string;
+  /** Nullable — a row without a customer-visible number is still valid; the
+   *  factored_invoices UUID id is its stable identifier. */
+  invoice_number: string | null;
   face_amount: number;
   advanced_on: string;
   /** When present, an operator note that lands on the funded row. */
@@ -310,7 +316,7 @@ export function toAdvancePayload(row: WorkbookRow): AdvanceRowPayload {
   const creditor = (row["Creditor"] ?? "").trim();
   if (!creditor) throw new Error("Creditor: missing");
 
-  const invoice_number = invoiceNumberOrThrow(row["Invoice #"]);
+  const invoice_number = invoiceNumberOrNull(row["Invoice #"]);
   const face_amount = parseMoney(row["Total Invoice"], "Total Invoice");
   if (face_amount === null || face_amount <= 0) {
     throw new Error("Total Invoice: missing or not positive");

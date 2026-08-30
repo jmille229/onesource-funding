@@ -7,6 +7,7 @@ import {
 import { toast } from 'sonner';
 import { adminApi } from '../../lib/admin-api';
 import { formatCurrency, formatDate } from '../../lib/api';
+import { factoredInvoiceRef } from '@constructpm/shared';
 
 /**
  * The operator's decision screen.
@@ -310,7 +311,7 @@ function OperatorEntryForm({ onDone }: { onDone: () => void }) {
     mutationFn: () => adminApi.post('/requests', {
       company_id: form.company_id,
       debtor_id: form.debtor_id || null,
-      invoice_number: form.invoice_number.trim(),
+      invoice_number: form.invoice_number.trim() || null,
       requested_amount: Number(form.requested_amount),
       customer_name: form.customer_name.trim() || null,
       note: form.note.trim() || null,
@@ -324,7 +325,7 @@ function OperatorEntryForm({ onDone }: { onDone: () => void }) {
       toast.error(e.response?.data?.message ?? 'Could not enter the request'),
   });
 
-  const valid = form.company_id && form.invoice_number.trim() && Number(form.requested_amount) > 0;
+  const valid = form.company_id && Number(form.requested_amount) > 0;
 
   return (
     <form className="card p-4 mb-4 space-y-4"
@@ -355,10 +356,14 @@ function OperatorEntryForm({ onDone }: { onDone: () => void }) {
           </select>
         </div>
         <div>
-          <label className="label" htmlFor="oe-number">Invoice number *</label>
-          <input id="oe-number" className="input" required value={form.invoice_number}
+          <label className="label" htmlFor="oe-number">Invoice number</label>
+          <input id="oe-number" className="input" value={form.invoice_number}
             onChange={(e) => setForm(f => ({ ...f, invoice_number: e.target.value }))}
-            placeholder="e.g. APP # 601328-5" />
+            placeholder="Blank if the agency hasn't issued one" />
+          <p className="text-xs text-slate-500 mt-1">
+            Optional. Leave blank when the invoice hasn't been numbered yet —
+            an INV-XXXXXXXX identifier is assigned automatically.
+          </p>
         </div>
         <div>
           <label className="label" htmlFor="oe-amount">Face amount *</label>
@@ -457,7 +462,7 @@ export function UnderwritingQueue() {
                         )}
                       </p>
                       <p className="text-xs text-slate-500 truncate">
-                        {r.invoice_number ?? '—'} · {r.customer_name ?? 'agency not named'} ·{' '}
+                        <span className="font-mono">{factoredInvoiceRef(r)}</span> · {r.customer_name ?? 'agency not named'} ·{' '}
                         {formatDate(r.requested_at)}
                         {Number(r.document_count) === 0 && (
                           <span className="text-amber-700"> · no document</span>

@@ -150,12 +150,22 @@ export interface UnderwritingDecision {
   exposure_headroom: number;
 }
 
-const PLACEHOLDER_INVOICE = new Set(['', '-', '--', 'n/a', 'na', 'none', 'tbd', 'pending', '?']);
+const PLACEHOLDER_INVOICE = new Set(['-', '--', 'n/a', 'na', 'none', 'tbd', 'pending', '?']);
 
-/** An invoice number that is missing or a placeholder. Both such advances in the book are unpaid. */
+/**
+ * A cell that is actively lying about being an invoice number: "-", "N/A",
+ * "TBD" and friends. Both such advances in the historical book are unpaid.
+ *
+ * Blank or null is NOT a placeholder — it means the number hasn't been entered
+ * yet (the agency may not have issued one), and the invoice's own UUID id is
+ * its stable identifier via shared.factoredInvoiceRef. Blank should not
+ * hard-stop the engine.
+ */
 export function isPlaceholderInvoiceNumber(n: string | null | undefined): boolean {
-  if (n === null || n === undefined) return true;
-  return PLACEHOLDER_INVOICE.has(n.trim().toLowerCase());
+  if (n === null || n === undefined) return false;
+  const s = n.trim().toLowerCase();
+  if (s === '') return false;
+  return PLACEHOLDER_INVOICE.has(s);
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;

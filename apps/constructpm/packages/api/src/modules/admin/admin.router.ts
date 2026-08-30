@@ -273,7 +273,11 @@ adminRouter.get('/invoices', asyncHandler(async (req, res) => {
 const fundSchema = z.object({
   company_id: z.string().uuid(),
   debtor_id: z.string().uuid(),
-  invoice_number: z.string().min(1).max(60),
+  // Optional. When absent the factored_invoices UUID id identifies the row
+  // in every UI and receipt (see shared.factoredInvoiceRef). A supplied
+  // placeholder like "-" or "N/A" is still refused by the underwriting engine
+  // — the two cases are treated differently on purpose.
+  invoice_number: z.string().trim().max(60).nullable().optional(),
   face_amount: z.number().positive(),
   advanced_on: z.string(),
   invoice_due_on: z.string().nullable().optional(),
@@ -331,7 +335,7 @@ async function fundInvoice(
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'advanced',$14,$15,$16)
      RETURNING *`,
     [b.company_id, client.rows[0].id, b.debtor_id, debtor.rows[0].legal_name,
-     b.invoice_id ?? null, b.job_id ?? null, b.invoice_number, b.face_amount, scheduleId,
+     b.invoice_id ?? null, b.job_id ?? null, b.invoice_number ?? null, b.face_amount, scheduleId,
      rate, sched.rows[0].recourse_days, advance, reserve, b.advanced_on, b.invoice_due_on ?? null,
      b.notes ?? null]);
 
@@ -723,7 +727,9 @@ adminRouter.post(
   validate(z.object({
     company_id: z.string().uuid(),
     debtor_id: z.string().uuid().nullable().optional(),
-    invoice_number: z.string().trim().min(1, 'Invoice number is required'),
+    // Optional. Blank means "not entered yet" — the funding_requests UUID id
+    // identifies the row. A placeholder like "-" or "N/A" is still refused.
+    invoice_number: z.string().trim().max(60).nullable().optional(),
     requested_amount: z.number().positive(),
     customer_name: z.string().trim().min(1).nullable().optional(),
     note: z.string().max(2000).nullable().optional(),
@@ -731,13 +737,15 @@ adminRouter.post(
   asyncHandler(async (req, res) => {
     const b = req.body as Record<string, unknown>;
 
-    // The engine hard-stops a placeholder invoice number, but catching it here
-    // gives the operator a straight answer at entry instead of a decline to
-    // interpret. Both such advances in the historical book are unpaid.
-    if (isPlaceholderInvoiceNumber(String(b['invoice_number']))) {
+    // Only guard against placeholders that are actively lying. A blank field
+    // is now allowed and passes through as NULL — the engine treats blank as
+    // "not entered yet" rather than as a made-up value.
+    const rawInv = b['invoice_number'];
+    const inv = typeof rawInv === 'string' ? rawInv.trim() : '';
+    if (inv !== '' && isPlaceholderInvoiceNumber(inv)) {
       res.status(422).json({
         error: 'invalid_invoice_number',
-        message: 'A real invoice number is required. Every advance written without one is unpaid.',
+        message: 'A placeholder like "-" or "N/A" is not a real invoice number. Leave it blank if the agency has not issued one yet.',
       });
       return;
     }
@@ -750,7 +758,7 @@ adminRouter.post(
          VALUES ($1, NULL, $2, $3, $4, $5, $6, 'operator', $7)
          RETURNING *`,
         [b['company_id'], b['debtor_id'] ?? null, b['requested_amount'],
-         b['customer_name'] ?? null, String(b['invoice_number']).trim(),
+         b['customer_name'] ?? null, inv === '' ? null : inv,
          b['note'] ?? null, req.platform.userId]);
 
       await audit(c, {
@@ -948,7 +956,9 @@ adminRouter.post(
       const funded = await fundInvoice(c, {
         company_id: fr.rows[0]['company_id']!,
         debtor_id: String(b['debtor_id']),
-        invoice_number: fr.rows[0]['invoice_number'] ?? 'UNKNOWN',
+        // Blank on the request stays blank on the invoice — the UUID id is
+        // its identifier via factoredInvoiceRef.
+        invoice_number: fr.rows[0]['invoice_number'] ?? null,
         face_amount: Number(b['face_amount'] ?? fr.rows[0]['requested_amount']),
         advanced_on: String(b['advanced_on']),
         invoice_due_on: (b['invoice_due_on'] as string | null) ?? null,
