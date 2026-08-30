@@ -6,7 +6,7 @@ import { signPlatformToken } from '../../lib/jwt.js';
 import { buildUpdateSet } from '../../lib/sql.js';
 import { isPlaceholderInvoiceNumber } from '../factoring/underwriting.js';
 import { scoreRequest } from '../factoring/underwriting.service.js';
-import { mapHeaders, toAdvancePayload } from './import-map.js';
+import { parseDelimited, toAdvancePayload } from './import-map.js';
 import {
   asyncHandler, validate, authenticatePlatform, authRateLimit,
 } from '../../middleware/index.js';
@@ -438,31 +438,8 @@ adminRouter.post(
 // Nothing is written unless every row parses. Importing financial data blind is
 // how you end up reconciling a half-applied batch by hand.
 
-function parseCsv(text: string): Record<string, string>[] {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim() !== '');
-  if (lines.length < 2) return [];
-  const headers = lines[0]!.split(',').map((h) => h.trim().replace(/^"|"$/g, ''));
-  const canonical = mapHeaders(headers);
-  return lines.slice(1).map((line) => {
-    // Minimal RFC-4180 handling: quoted fields may contain commas.
-    const cells: string[] = [];
-    let cur = '', inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i]!;
-      if (ch === '"') {
-        if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = !inQuotes;
-      } else if (ch === ',' && !inQuotes) { cells.push(cur); cur = ''; }
-      else cur += ch;
-    }
-    cells.push(cur);
-    const out: Record<string, string> = {};
-    for (let i = 0; i < canonical.length; i++) {
-      const key = canonical[i];
-      if (key) out[key] = (cells[i] ?? '').trim();
-    }
-    return out;
-  });
-}
+// Row splitting lives in ./import-map (parseDelimited) alongside the field
+// parsers so it can be tested in isolation.
 
 /**
  * Resolves a friendly Borrower name to a factoring_client, and a Creditor name
@@ -521,7 +498,7 @@ adminRouter.post(
   validate(z.object({ csv: z.string().min(1).max(2_000_000), dry_run: z.boolean().default(true) })),
   asyncHandler(async (req, res) => {
     const { csv, dry_run } = req.body as { csv: string; dry_run: boolean };
-    const raw = parseCsv(csv);
+    const raw = parseDelimited(csv);
 
     const errors: { row: number; message: string }[] = [];
     const valid: ParsedRow[] = [];

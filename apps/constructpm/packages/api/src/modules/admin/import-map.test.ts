@@ -1,7 +1,76 @@
 import { describe, it, expect } from 'vitest';
 import {
   mapHeaders, parseMoney, parseDate, invoiceNumberOrThrow, toAdvancePayload,
+  parseDelimited,
 } from './import-map.js';
+
+describe('parseDelimited', () => {
+  const HEADER = 'Borrower,Creditor,Invoice #,Total Invoice,Adv Date';
+
+  it('parses comma-separated pasted rows', () => {
+    const text = `${HEADER}\nRNV Electrical,PHDC,INV-42,9600,2025-08-14`;
+    expect(parseDelimited(text)).toEqual([{
+      Borrower: 'RNV Electrical', Creditor: 'PHDC',
+      'Invoice #': 'INV-42', 'Total Invoice': '9600', 'Adv Date': '2025-08-14',
+    }]);
+  });
+
+  it('auto-detects tab-separated input from Google Sheets paste', () => {
+    // The exact shape a copy-paste out of the Sheet produces. The old parser
+    // treated the whole line as one comma-less cell and rejected every row.
+    const text = 'Borrower\tCreditor\tInvoice #\tTotal Invoice\tAdv Date\n' +
+                 'RNV Electrical\tPHDC\tINV-42\t9600\t2025-08-14';
+    const rows = parseDelimited(text);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      Borrower: 'RNV Electrical', Creditor: 'PHDC', 'Invoice #': 'INV-42',
+    });
+  });
+
+  it('strips a UTF-8 BOM from Excel "Save as CSV UTF-8"', () => {
+    const text = '﻿' + HEADER + '\nRNV,PHDC,INV-1,100,2025-08-14';
+    const rows = parseDelimited(text);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!['Borrower']).toBe('RNV');
+  });
+
+  it('handles quoted cells containing the delimiter', () => {
+    // A Notes cell containing a comma is the common trip-wire.
+    const text = `${HEADER},Notes\nRNV,PHDC,INV-1,100,2025-08-14,"spoke, then emailed"`;
+    const rows = parseDelimited(text);
+    expect(rows[0]!['Notes']).toBe('spoke, then emailed');
+  });
+
+  it('handles quoted cells containing embedded newlines', () => {
+    // Notes with a linebreak (operator hits Alt-Enter inside a Sheet cell)
+    // would split one row into two under a naive newline-first parser.
+    const text = `${HEADER},Notes\nRNV,PHDC,INV-1,100,2025-08-14,"line one\nline two"`;
+    const rows = parseDelimited(text);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!['Notes']).toBe('line one\nline two');
+  });
+
+  it('decodes doubled quotes ("") to a single quote', () => {
+    const text = `${HEADER},Notes\nRNV,PHDC,INV-1,100,2025-08-14,"she said ""ok"""`;
+    expect(parseDelimited(text)[0]!['Notes']).toBe('she said "ok"');
+  });
+
+  it('drops trailing blank lines from a paste', () => {
+    const text = `${HEADER}\nRNV,PHDC,INV-1,100,2025-08-14\n\n\n`;
+    expect(parseDelimited(text)).toHaveLength(1);
+  });
+
+  it('returns [] for empty or header-only input', () => {
+    expect(parseDelimited('')).toEqual([]);
+    expect(parseDelimited('   ')).toEqual([]);
+    expect(parseDelimited(HEADER)).toEqual([]);
+  });
+
+  it('accepts CRLF line endings from Windows Excel', () => {
+    const text = `${HEADER}\r\nRNV,PHDC,INV-1,100,2025-08-14\r\n`;
+    expect(parseDelimited(text)).toHaveLength(1);
+  });
+});
 
 describe('mapHeaders', () => {
   it('canonicalises the workbook header row exactly', () => {
