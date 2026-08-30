@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import { Shield, ArrowRight } from "lucide-react";
 import heroPhone from "@/assets/hero-phone.png";
@@ -81,14 +82,14 @@ const HeroSection = () => {
                   aria-hidden="true"
                 />
               </a>
-              <a
-                href="#difference"
+              <Link
+                to="/how-it-works"
                 className="btn-outline-light text-base px-7 py-3.5 focus-visible:outline-none
                            focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2
                            focus-visible:ring-offset-primary"
               >
                 How it works
-              </a>
+              </Link>
             </div>
           </motion.div>
 

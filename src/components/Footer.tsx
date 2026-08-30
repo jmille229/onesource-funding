@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Facebook, Twitter, Linkedin, Instagram, Youtube } from "lucide-react";
 
 const footerLinks = {
@@ -5,6 +6,11 @@ const footerLinks = {
   Partner: ["Referral Program", "Broker Program", "CPA Program"],
   "Invoice Factoring": ["What is Factoring", "How It Works", "Industries", "Freight Factoring"],
   Resources: ["Blog", "FAQs", "Calculator", "Case Studies"],
+};
+
+/** Footer labels that now have a real destination. */
+const FOOTER_ROUTES: Record<string, string> = {
+  "How It Works": "/how-it-works",
 };
 
 const socialLinks = [
@@ -46,13 +52,19 @@ const Footer = () => (
           <div key={title}>
             <h4 className="font-display font-bold text-sm mb-4">{title}</h4>
             <ul className="space-y-2.5">
-              {links.map((link) => (
-                <li key={link}>
-                  <a href="#" className="text-primary-foreground/60 text-sm hover:text-accent transition-colors">
-                    {link}
-                  </a>
-                </li>
-              ))}
+              {links.map((link) => {
+                // Most of these are placeholders awaiting real pages; the ones
+                // that exist get routed rather than left as dead "#" links.
+                const route = FOOTER_ROUTES[link];
+                const cls = "text-primary-foreground/60 text-sm hover:text-accent transition-colors";
+                return (
+                  <li key={link}>
+                    {route
+                      ? <Link to={route} className={cls}>{link}</Link>
+                      : <a href="#" className={cls}>{link}</a>}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ))}

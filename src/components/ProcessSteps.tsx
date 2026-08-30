@@ -1,4 +1,5 @@
-import { ClipboardCheck, Send, DollarSign } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ClipboardCheck, Send, DollarSign, ArrowRight } from "lucide-react";
 import { motion } from "framer-motion";
 
 const steps = [
@@ -31,6 +32,18 @@ const ProcessSteps = () => (
             <p className="text-muted-foreground text-sm">{s.desc}</p>
           </motion.div>
         ))}
+      </div>
+
+      <div className="text-center mt-12">
+        <Link
+          to="/how-it-works"
+          className="inline-flex items-center gap-2 font-semibold text-primary hover:text-accent
+                     transition-colors focus-visible:outline-none focus-visible:ring-2
+                     focus-visible:ring-accent focus-visible:ring-offset-2 rounded"
+        >
+          See the full process
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
       </div>
     </div>
   </section>
