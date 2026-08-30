@@ -37,10 +37,18 @@ const consultationSchema = z.object({
   message: z.string().trim().max(2000).optional(),
 });
 
+import { CONTACT } from "@/lib/contact";
+
 type ConsultationForm = z.infer<typeof consultationSchema>;
 
-/** Where consultation leads are delivered. */
-const LEAD_EMAIL = "zac@os-funding.com";
+/**
+ * Where consultation leads are delivered.
+ *
+ * The general info inbox rather than a named salesperson. A public form dropping
+ * every lead to one person's mailbox is fragile (holidays, turnover, spam
+ * filters) and a small privacy overshare for a page that anyone can view-source.
+ */
+const LEAD_EMAIL = CONTACT.email;
 /**
  * Optional in-page delivery. Set VITE_LEAD_ENDPOINT to a form-to-email service
  * URL (Formspree, Web3Forms, Basin, or a custom serverless handler) configured
@@ -211,6 +219,23 @@ const GetStartedSection = () => {
               <button type="submit" disabled={isSubmitting} className="btn-accent w-full text-base py-4 disabled:opacity-60 disabled:cursor-not-allowed">
                 {isSubmitting ? "Submitting..." : "Submit Request"}
               </button>
+
+              {/* An escape hatch for the visitor who does not want to fill in a
+                  form. Set small and quiet, since the primary CTA above is what
+                  we want them to click. The mailto: pre-addresses the draft, so
+                  it costs one click instead of copying the address by hand. */}
+              <p className="text-center text-sm text-dark-section-foreground/70 pt-1">
+                Or email us at{" "}
+                <a
+                  href={`mailto:${CONTACT.email}`}
+                  className="font-semibold text-accent hover:underline underline-offset-2
+                             focus-visible:outline-none focus-visible:ring-2
+                             focus-visible:ring-accent focus-visible:ring-offset-2
+                             focus-visible:ring-offset-dark-section rounded"
+                >
+                  {CONTACT.email}
+                </a>
+              </p>
             </form>
           </motion.div>
 
