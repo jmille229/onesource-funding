@@ -6,6 +6,7 @@ import { signPlatformToken } from '../../lib/jwt.js';
 import { buildUpdateSet } from '../../lib/sql.js';
 import { isPlaceholderInvoiceNumber } from '../factoring/underwriting.js';
 import { scoreRequest } from '../factoring/underwriting.service.js';
+import { mapHeaders, toAdvancePayload } from './import-map.js';
 import {
   asyncHandler, validate, authenticatePlatform, authRateLimit,
 } from '../../middleware/index.js';
@@ -429,23 +430,19 @@ adminRouter.post(
 );
 
 // ─── CSV import ───────────────────────────────────────────────────────────────
-// Always parsed and validated in full before anything is written, and `dry_run`
-// is the default. Importing financial data blind is how you end up reconciling a
-// half-applied batch by hand.
-const importRowSchema = z.object({
-  company_id: z.string().uuid(),
-  debtor_id: z.string().uuid(),
-  invoice_number: z.string().min(1),
-  face_amount: z.number().positive(),
-  advanced_on: z.string(),
-  invoice_due_on: z.string().nullable().optional(),
-  fee_schedule_id: z.string().uuid().nullable().optional(),
-});
+// The importer speaks the OneSource workbook's Advance Book columns directly,
+// so the sheet the operator already maintains can be pasted in unchanged. The
+// column-to-payload mapping and every parser live in ./import-map, tested in
+// isolation there; this handler is the transactional shell around it.
+//
+// Nothing is written unless every row parses. Importing financial data blind is
+// how you end up reconciling a half-applied batch by hand.
 
 function parseCsv(text: string): Record<string, string>[] {
   const lines = text.split(/\r?\n/).filter((l) => l.trim() !== '');
   if (lines.length < 2) return [];
-  const headers = lines[0]!.split(',').map((h) => h.trim());
+  const headers = lines[0]!.split(',').map((h) => h.trim().replace(/^"|"$/g, ''));
+  const canonical = mapHeaders(headers);
   return lines.slice(1).map((line) => {
     // Minimal RFC-4180 handling: quoted fields may contain commas.
     const cells: string[] = [];
@@ -458,9 +455,66 @@ function parseCsv(text: string): Record<string, string>[] {
       else cur += ch;
     }
     cells.push(cur);
-    return Object.fromEntries(headers.map((h, i) => [h, (cells[i] ?? '').trim()]));
+    const out: Record<string, string> = {};
+    for (let i = 0; i < canonical.length; i++) {
+      const key = canonical[i];
+      if (key) out[key] = (cells[i] ?? '').trim();
+    }
+    return out;
   });
 }
+
+/**
+ * Resolves a friendly Borrower name to a factoring_client, and a Creditor name
+ * to a factoring_debtor. Both are cached across a batch — a workbook of 300
+ * rows typically references a dozen names and lookups shouldn't cost 300 round
+ * trips. Match is case- and whitespace-insensitive; a Borrower with no matching
+ * factoring_client fails the row rather than silently creating one, because
+ * the operator sets up clients deliberately (fee schedule, credit limit, etc).
+ *
+ * A Creditor with no debtor row IS created — that's a bookkeeping detail rather
+ * than a policy decision, and forcing the operator to pre-seed debtors before
+ * every import would be busywork.
+ */
+class NameResolver {
+  private clients = new Map<string, { id: string; company_id: string }>();
+  private debtors = new Map<string, string>();
+  constructor(private c: import('pg').PoolClient) {}
+  private static key(s: string) { return s.trim().toLowerCase().replace(/\s+/g, ' '); }
+
+  async client(name: string): Promise<{ id: string; company_id: string }> {
+    const k = NameResolver.key(name);
+    const hit = this.clients.get(k);
+    if (hit) return hit;
+    const r = await this.c.query<{ id: string; company_id: string }>(
+      `SELECT fc.id, fc.company_id
+         FROM factoring_clients fc JOIN companies co ON co.id = fc.company_id
+        WHERE LOWER(BTRIM(co.name)) = $1`, [k]);
+    if (!r.rows[0]) throw new Error(`Borrower: "${name}" is not a set-up factoring client`);
+    this.clients.set(k, r.rows[0]);
+    return r.rows[0];
+  }
+
+  async debtor(name: string): Promise<string> {
+    const k = NameResolver.key(name);
+    const hit = this.debtors.get(k);
+    if (hit) return hit;
+    const found = await this.c.query<{ id: string }>(
+      `SELECT id FROM factoring_debtors
+        WHERE LOWER(BTRIM(legal_name)) = $1 OR LOWER(BTRIM(COALESCE(dba,''))) = $1
+        LIMIT 1`, [k]);
+    if (found.rows[0]) { this.debtors.set(k, found.rows[0].id); return found.rows[0].id; }
+    // Create with the operator's spelling and mark it verification-unknown, so
+    // the underwriting engine treats it as unproven until someone fills in the
+    // agency's portal/confirmation/ACH/staff attributes.
+    const made = await this.c.query<{ id: string }>(
+      `INSERT INTO factoring_debtors (legal_name) VALUES ($1) RETURNING id`, [name.trim()]);
+    this.debtors.set(k, made.rows[0]!.id);
+    return made.rows[0]!.id;
+  }
+}
+
+interface ParsedRow { row: number; payload: import('./import-map.js').AdvanceRowPayload; }
 
 adminRouter.post(
   '/invoices/import',
@@ -470,26 +524,21 @@ adminRouter.post(
     const raw = parseCsv(csv);
 
     const errors: { row: number; message: string }[] = [];
-    const valid: z.infer<typeof importRowSchema>[] = [];
+    const valid: ParsedRow[] = [];
 
     raw.forEach((r, i) => {
-      const parsed = importRowSchema.safeParse({
-        ...r,
-        face_amount: r['face_amount'] ? Number(r['face_amount']) : undefined,
-        invoice_due_on: r['invoice_due_on'] || null,
-        fee_schedule_id: r['fee_schedule_id'] || null,
-      });
-      if (parsed.success) valid.push(parsed.data);
-      else {
-        errors.push({
-          row: i + 2, // +2: 1-indexed, plus the header line
-          message: parsed.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join('; '),
-        });
+      // +2: 1-indexed, plus the header line.
+      const rowNum = i + 2;
+      // Skip rows that are entirely blank — operator sheets often carry
+      // trailing empty rows and yelling about them adds noise, not signal.
+      if (!Object.values(r).some((v) => v.trim() !== '')) return;
+      try {
+        valid.push({ row: rowNum, payload: toAdvancePayload(r) });
+      } catch (err) {
+        errors.push({ row: rowNum, message: (err as Error).message });
       }
     });
 
-    // Nothing is written unless every row parses. A partial import of advances is
-    // worse than no import.
     if (dry_run || errors.length) {
       res.json({
         data: {
@@ -497,21 +546,67 @@ adminRouter.post(
           applied: 0,
           would_apply: valid.length,
           errors,
-          preview: valid.slice(0, 20),
+          preview: valid.slice(0, 20).map((v) => ({
+            row: v.row,
+            borrower: v.payload.borrower,
+            creditor: v.payload.creditor,
+            invoice_number: v.payload.invoice_number,
+            face_amount: v.payload.face_amount,
+            advanced_on: v.payload.advanced_on,
+            will_settle: v.payload.collection !== null,
+          })),
         },
       });
       return;
     }
 
-    const created = await withAdminTransaction(async (c) => {
-      const out = [];
-      for (const row of valid) {
-        out.push(await fundInvoice(c, row, req.platform.userId, req.ip ?? null));
+    // One transaction, one resolver — either the whole batch lands or none does.
+    const applied = await withAdminTransaction(async (c) => {
+      const resolver = new NameResolver(c);
+      let n = 0;
+      for (const { row, payload } of valid) {
+        try {
+          const { company_id } = await resolver.client(payload.borrower);
+          const debtor_id = await resolver.debtor(payload.creditor);
+
+          const funded = await fundInvoice(c, {
+            company_id, debtor_id,
+            invoice_number: payload.invoice_number,
+            face_amount: payload.face_amount,
+            advanced_on: payload.advanced_on,
+            invoice_due_on: null,
+            fee_schedule_id: null,          // let the client's default_fee_schedule apply
+            invoice_id: null, job_id: null,
+            notes: payload.notes,
+          }, req.platform.userId, req.ip ?? null);
+
+          // Chain the collection when the workbook says the money came back.
+          if (payload.collection) {
+            const memo = payload.collection.check_number
+              ? `Check #${payload.collection.check_number}`
+              : null;
+            await c.query(
+              `UPDATE factored_invoices SET status='collected', collected_on=$2, updated_at=NOW()
+                WHERE id=$1 AND status='advanced'`,
+              [funded!['id'], payload.collection.collected_on]);
+            await c.query(
+              `INSERT INTO factoring_events (company_id,factored_invoice_id,event_type,amount,occurred_on,memo)
+               VALUES ($1,$2,'payment_received',$3,$4,$5)`,
+              [company_id, funded!['id'], payload.collection.amount_received,
+               payload.collection.collected_on, memo]);
+          }
+          n++;
+        } catch (err) {
+          // A failure inside the transaction has to abort the whole batch, so
+          // the operator sees which row broke rather than a partial application.
+          throw Object.assign(new Error(`Row ${row}: ${(err as Error).message}`),
+            { status: 422 });
+        }
       }
-      return out;
+      return n;
     });
 
-    res.status(201).json({ data: { dry_run: false, applied: created.length, errors: [] } });
+    res.status(201).json({ data: { dry_run: false, applied, errors: [] } });
   })
 );
 
