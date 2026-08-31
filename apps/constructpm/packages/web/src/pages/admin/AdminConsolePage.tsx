@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Shield, Loader2, LogOut, Upload, AlertTriangle } from 'lucide-react';
 import { adminApi, useAdminStore, hasAdminToken } from '../../lib/admin-api';
 import { formatCurrency, formatDate } from '../../lib/api';
+import { factoredInvoiceRef } from '@constructpm/shared';
 import { UnderwritingQueue } from './UnderwritingQueue';
 
 // ─── Login ────────────────────────────────────────────────────────────────────
@@ -84,6 +85,7 @@ function FundForm({ onDone }: { onDone: () => void }) {
   const fund = useMutation({
     mutationFn: () => adminApi.post('/invoices', {
       ...form,
+      invoice_number: form.invoice_number.trim() || null,
       face_amount: Number(form.face_amount),
       invoice_due_on: form.invoice_due_on || null,
     }),
@@ -125,7 +127,8 @@ function FundForm({ onDone }: { onDone: () => void }) {
         </div>
         <div>
           <label className="label">Invoice number</label>
-          <input className="input" value={form.invoice_number} onChange={set('invoice_number')} required />
+          <input className="input" value={form.invoice_number} onChange={set('invoice_number')}
+                 placeholder="Optional — leave blank for an auto INV-… id" />
         </div>
         <div>
           <label className="label">Face amount</label>
@@ -167,7 +170,7 @@ function FundForm({ onDone }: { onDone: () => void }) {
 // how ledgers get out of sync.
 
 interface ImportPreviewRow {
-  row: number; borrower: string; creditor: string; invoice_number: string;
+  row: number; borrower: string; creditor: string; invoice_number: string | null;
   face_amount: number; advanced_on: string; will_settle: boolean;
 }
 interface ImportPreview {
@@ -325,7 +328,9 @@ function ImportPanel() {
                       <td className="py-1 pr-3 tabular-nums">{p.row}</td>
                       <td className="py-1 pr-3">{p.borrower}</td>
                       <td className="py-1 pr-3">{p.creditor}</td>
-                      <td className="py-1 pr-3 font-mono">{p.invoice_number}</td>
+                      <td className="py-1 pr-3 font-mono">
+                        {p.invoice_number ?? <span className="text-slate-400">(auto INV-…)</span>}
+                      </td>
                       <td className="py-1 pr-3 text-right tabular-nums">
                         ${p.face_amount.toLocaleString()}
                       </td>
@@ -487,7 +492,9 @@ function AdvancesTable({ onChanged }: { onChanged: () => void }) {
           {(data ?? []).map((r: Record<string, string>) => (
             <tr key={r['id']} className="hover:bg-slate-50">
               <td className="table-cell">{r['company_name']}</td>
-              <td className="table-cell font-medium">{r['invoice_number']}</td>
+              <td className="table-cell font-medium font-mono">
+                {factoredInvoiceRef({ id: r['id']!, invoice_number: r['invoice_number'] ?? null })}
+              </td>
               <td className="table-cell">{r['debtor_name']}</td>
               <td className="table-cell text-right tabular-nums">{formatCurrency(r['face_amount'])}</td>
               <td className="table-cell text-right tabular-nums">{formatCurrency(r['advance_amount'])}</td>

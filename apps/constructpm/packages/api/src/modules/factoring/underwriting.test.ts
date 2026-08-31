@@ -79,9 +79,15 @@ const merge = (patch: {
 };
 
 describe('isPlaceholderInvoiceNumber', () => {
-  it('catches the values that actually appear in the book', () => {
-    for (const v of ['-', ' - ', '', '  ', 'N/A', 'na', 'none', 'TBD', 'pending', '?', null, undefined]) {
-      expect(isPlaceholderInvoiceNumber(v as string | null)).toBe(true);
+  it('catches the fake values that actually appear in the book', () => {
+    for (const v of ['-', ' - ', 'N/A', 'na', 'none', 'TBD', 'pending', '?']) {
+      expect(isPlaceholderInvoiceNumber(v)).toBe(true);
+    }
+  });
+
+  it('does NOT flag blank/null — that means the number is not entered yet, and the UUID id identifies the invoice', () => {
+    for (const v of ['', '  ', null, undefined]) {
+      expect(isPlaceholderInvoiceNumber(v as string | null)).toBe(false);
     }
   });
 
@@ -127,10 +133,20 @@ describe('exposureLimit', () => {
 });
 
 describe('hard stops', () => {
-  it('declines a request with no invoice number', () => {
+  it('declines a request whose invoice number is a placeholder like "-"', () => {
+    // A cell spelled "-" is a lie about having a number, and both such
+    // advances in the book were unpaid.
     const d = underwrite(merge({ request: { invoice_number: '-' } }), POLICY);
     expect(d.action).toBe('decline');
     expect(d.hard_stops.map(h => h.code)).toContain('no_invoice_number');
+  });
+
+  it('does NOT hard-stop when the invoice number is simply blank — the UUID id identifies the invoice', () => {
+    // Blank means "the agency has not issued a number yet", not "I made one
+    // up". The row is valid; the internal INV-XXXXXXXX ref stands in.
+    const d = underwrite(merge({ request: { invoice_number: '   ' } }), POLICY);
+    expect(d.action).toBe('approve');
+    expect(d.hard_stops.map(h => h.code)).not.toContain('no_invoice_number');
   });
 
   it('declines a client on the negative list', () => {
@@ -188,8 +204,8 @@ describe('hard stops', () => {
     expect(d.exposure_headroom).toBe(10000);
   });
 
-  it('is never overridden by an otherwise perfect score', () => {
-    const d = underwrite(merge({ request: { invoice_number: '   ' } }), POLICY);
+  it('placeholder invoice number is never overridden by an otherwise perfect score', () => {
+    const d = underwrite(merge({ request: { invoice_number: 'N/A' } }), POLICY);
     expect(d.score).toBe(100);          // nothing else is wrong
     expect(d.action).toBe('decline');   // and it still does not fund
   });
