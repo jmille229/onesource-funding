@@ -33,17 +33,25 @@
 -- historical portfolio's clients to it.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-WITH new_schedule AS (
-  INSERT INTO fee_schedules (name, description, is_template, tier_mode, advance_rate_pct, recourse_days)
-  SELECT 'Standard',
-         'Default schedule. 80% advance; step tiers on days outstanding: 0% for the first 10 days, +1% every 10 days thereafter with a half-step at day 30.',
-         TRUE, 'step', 80.0000, 90
-   WHERE NOT EXISTS (SELECT 1 FROM fee_schedules WHERE name = 'Standard' AND retired_at IS NULL)
-  RETURNING id
-)
+-- Ensure a live 'Standard' schedule exists. A no-op if one is already there.
+INSERT INTO fee_schedules (name, description, is_template, tier_mode, advance_rate_pct, recourse_days)
+SELECT 'Standard',
+       'Default schedule. 80% advance; step tiers on days outstanding: 0% same day, 1% first 10 days, +1% every 10 days thereafter with a half-step at day 30.',
+       TRUE, 'step', 80.0000, 90
+ WHERE NOT EXISTS (SELECT 1 FROM fee_schedules WHERE name = 'Standard' AND retired_at IS NULL);
+
+-- Wipe the existing tier rows for the live Standard schedule before re-
+-- inserting the canonical set. Only the tiers are wiped — funded advances
+-- snapshot their own advance_rate and recourse_days at fund time, so nothing
+-- already booked is disturbed even if the tiers here later change shape.
+DELETE FROM fee_schedule_tiers
+ WHERE fee_schedule_id IN (
+   SELECT id FROM fee_schedules WHERE name = 'Standard' AND retired_at IS NULL
+ );
+
 INSERT INTO fee_schedule_tiers (fee_schedule_id, from_day, to_day, fee_pct)
-SELECT ns.id, t.from_day, t.to_day, t.fee_pct
-  FROM new_schedule ns
+SELECT fs.id, t.from_day, t.to_day, t.fee_pct
+  FROM fee_schedules fs
   CROSS JOIN (VALUES
     (  0,    0,  0.0),   -- day 0: paid back same day, no fee
     (  1,   10,  1.0),
@@ -72,7 +80,8 @@ SELECT ns.id, t.from_day, t.to_day, t.fee_pct
     (231,  240, 23.5),
     (241,  250, 24.5),
     (251, NULL, 25.5)    -- open-ended
-  ) AS t(from_day, to_day, fee_pct);
+  ) AS t(from_day, to_day, fee_pct)
+ WHERE fs.name = 'Standard' AND fs.retired_at IS NULL;
 
 -- Verification. Prints the schedule and every tier so the operator can
 -- eyeball the numbers before onboarding clients against it.
