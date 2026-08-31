@@ -92,12 +92,22 @@ all_pairs AS (
   SELECT id, name FROM new_companies
 )
 
--- factoring_clients has UNIQUE (company_id) so ON CONFLICT is the clean
--- no-op if a client row already exists for this company.
+-- factoring_clients has UNIQUE (company_id) so ON CONFLICT gives us clean
+-- upsert semantics. Existing rows are left alone EXCEPT to backfill a NULL
+-- default_fee_schedule_id — a hole an earlier run leaves if the seeder was
+-- executed before create-standard-fee-schedule.sql. Without this backfill
+-- the import fails at fund time with "no fee schedule for this client".
 INSERT INTO factoring_clients (company_id, status, default_fee_schedule_id)
 SELECT company_id, 'active', (SELECT id FROM fee_default)
   FROM all_pairs
- ON CONFLICT (company_id) DO NOTHING;
+ ON CONFLICT (company_id) DO UPDATE
+   SET default_fee_schedule_id = COALESCE(
+         factoring_clients.default_fee_schedule_id,
+         EXCLUDED.default_fee_schedule_id
+       ),
+       updated_at = NOW()
+ WHERE factoring_clients.default_fee_schedule_id IS NULL
+   AND EXCLUDED.default_fee_schedule_id IS NOT NULL;
 
 -- Verification. Prints everyone the seeder just touched (and anyone else
 -- already there) so the operator can eyeball the fee schedule assignment
