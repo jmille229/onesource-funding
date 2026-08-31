@@ -17,8 +17,9 @@
 --     21–30    →  2.5%   (deliberate half-step at the 30-day mark)
 --     31–40    →  3.5%
 --     41–50    →  4.5%   (+1% per 10 days from here on out)
---     … up through 241–250 → 24.5%
---     251+     → 25.5%   (open-ended tail)
+--     … up through 711–720 → 71.5%
+--     721+     → 72.5%   (open-ended tail — matches what the pattern would
+--                          produce for the 721–730 tier if we capped there)
 --
 -- Idempotent — a schedule named 'Standard' is skipped if it already exists,
 -- so re-runs are safe.
@@ -49,38 +50,26 @@ DELETE FROM fee_schedule_tiers
    SELECT id FROM fee_schedules WHERE name = 'Standard' AND retired_at IS NULL
  );
 
+-- Tier rows built in three parts and unioned:
+--   1) the special first-30-days ramp (half-step at day 30, hand-listed)
+--   2) the regular +1% per 10 days pattern from day 31 through day 720
+--      (69 tiers, generated so the arithmetic can't drift out of step)
+--   3) the open-ended tail for day 721 onwards
 INSERT INTO fee_schedule_tiers (fee_schedule_id, from_day, to_day, fee_pct)
+WITH tiers(from_day, to_day, fee_pct) AS (
+  SELECT  0::int,  0::int,  0.0::numeric  -- paid back same day: no fee
+  UNION ALL SELECT  1, 10,  1.0
+  UNION ALL SELECT 11, 20,  2.0
+  UNION ALL SELECT 21, 30,  2.5           -- deliberate half-step
+  UNION ALL
+    SELECT (31 + 10*n)::int,
+           (40 + 10*n)::int,
+           (3.5 + n)::numeric
+      FROM generate_series(0, 68) AS n    -- 31-40 (3.5%) through 711-720 (71.5%)
+  UNION ALL SELECT 721, NULL::int, 72.5   -- open-ended tail
+)
 SELECT fs.id, t.from_day, t.to_day, t.fee_pct
-  FROM fee_schedules fs
-  CROSS JOIN (VALUES
-    (  0,    0,  0.0),   -- day 0: paid back same day, no fee
-    (  1,   10,  1.0),
-    ( 11,   20,  2.0),
-    ( 21,   30,  2.5),
-    ( 31,   40,  3.5),
-    ( 41,   50,  4.5),
-    ( 51,   60,  5.5),
-    ( 61,   70,  6.5),
-    ( 71,   80,  7.5),
-    ( 81,   90,  8.5),
-    ( 91,  100,  9.5),
-    (101,  110, 10.5),
-    (111,  120, 11.5),
-    (121,  130, 12.5),
-    (131,  140, 13.5),
-    (141,  150, 14.5),
-    (151,  160, 15.5),
-    (161,  170, 16.5),
-    (171,  180, 17.5),
-    (181,  190, 18.5),
-    (191,  200, 19.5),
-    (201,  210, 20.5),
-    (211,  220, 21.5),
-    (221,  230, 22.5),
-    (231,  240, 23.5),
-    (241,  250, 24.5),
-    (251, NULL, 25.5)    -- open-ended
-  ) AS t(from_day, to_day, fee_pct)
+  FROM fee_schedules fs, tiers t
  WHERE fs.name = 'Standard' AND fs.retired_at IS NULL;
 
 -- Verification. Prints the schedule and every tier so the operator can
