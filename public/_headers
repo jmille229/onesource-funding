@@ -9,13 +9,14 @@
 #                              attributes; a nonce cannot cover attributes.
 #   - fonts.googleapis.com /   Google Fonts stylesheet and the font files it
 #     fonts.gstatic.com        pulls in.
-#   - connect-src 'self'       If VITE_LEAD_ENDPOINT is ever configured (see
-#                              GetStartedSection.tsx), add that origin here or
-#                              the form POST will be blocked by the browser.
+#   - connect-src 'self' +     The "Get Started" form POSTs leads to Web3Forms
+#     api.web3forms.com        (see GetStartedSection.tsx). Without this origin
+#                              the browser blocks the submission. If the lead
+#                              provider ever changes, change this host too.
 #   - frame-ancestors 'none'   Nothing should embed the site.
 
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://api.web3forms.com; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin

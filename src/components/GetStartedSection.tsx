@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { FileText, Settings, Building2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useForm } from "react-hook-form";
@@ -49,29 +50,25 @@ type ConsultationForm = z.infer<typeof consultationSchema>;
  * filters) and a small privacy overshare for a page that anyone can view-source.
  */
 const LEAD_EMAIL = CONTACT.email;
-/**
- * Optional in-page delivery. Set VITE_LEAD_ENDPOINT to a form-to-email service
- * URL (Formspree, Web3Forms, Basin, or a custom serverless handler) configured
- * to deliver to LEAD_EMAIL. When set, the form POSTs JSON and never leaves the
- * page. When unset, we fall back to opening the visitor's email client
- * addressed to LEAD_EMAIL so the lead is never silently dropped.
- */
-const LEAD_ENDPOINT = import.meta.env.VITE_LEAD_ENDPOINT as string | undefined;
 
-function buildMailto(values: ConsultationForm): string {
-  const subject = `Consultation request — ${values.firstName} ${values.lastName}`;
-  const body = [
-    `Name: ${values.firstName} ${values.lastName}`,
-    `Email: ${values.email}`,
-    `Phone: ${values.phone}`,
-    values.company ? `Company: ${values.company}` : null,
-    "",
-    values.message ? `Message:\n${values.message}` : null,
-  ]
-    .filter((line): line is string => line !== null)
-    .join("\n");
-  return `mailto:${LEAD_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-}
+/**
+ * In-page lead delivery via Web3Forms (https://web3forms.com).
+ *
+ * The form POSTs JSON to Web3Forms, which emails the lead to the address the
+ * access key is registered against (info@os-funding.com) — no email client is
+ * opened, and nothing about the flow is visible to the visitor beyond a success
+ * toast.
+ *
+ * The access key is intentionally embeddable: Web3Forms keys are public
+ * identifiers meant to sit in client HTML, and abuse is bounded by the allowed-
+ * domains restriction set in the Web3Forms dashboard plus their spam filtering,
+ * not by keeping the key secret. It can still be overridden at build time with
+ * VITE_WEB3FORMS_ACCESS_KEY if the key is ever rotated without a code change.
+ */
+const WEB3FORMS_ENDPOINT = "https://api.web3forms.com/submit";
+const WEB3FORMS_ACCESS_KEY =
+  (import.meta.env.VITE_WEB3FORMS_ACCESS_KEY as string | undefined) ??
+  "84af53e2-3a4f-4651-8a52-f61f778412bb";
 
 const inputClass =
   "w-full rounded-lg border border-white/20 bg-white/10 px-4 py-3 text-sm text-dark-section-foreground placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-accent aria-[invalid=true]:border-red-400 aria-[invalid=true]:ring-red-400";
@@ -86,29 +83,47 @@ const GetStartedSection = () => {
     resolver: zodResolver(consultationSchema),
   });
 
+  // Honeypot: a field no human sees or fills. A bot that dutifully completes
+  // every input trips it, and we drop the submission while showing the same
+  // success toast a real visitor gets — never revealing that it was caught.
+  // This runs ahead of Web3Forms' own server-side spam filtering.
+  const honeypotRef = useRef<HTMLInputElement>(null);
+
   const onSubmit = async (values: ConsultationForm) => {
-    // Preferred path: post to a configured form-to-email service.
-    if (LEAD_ENDPOINT) {
-      try {
-        const res = await fetch(LEAD_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify(values),
-        });
-        if (!res.ok) throw new Error(`Bad response: ${res.status}`);
-        toast.success("Thanks! We received your request and will be in touch shortly.");
-        reset();
-      } catch {
-        toast.error(`Something went wrong. Please email us directly at ${LEAD_EMAIL}.`);
-      }
+    if (honeypotRef.current?.value) {
+      toast.success("Thanks! We received your request and will be in touch shortly.");
+      reset();
       return;
     }
 
-    // Fallback: open the visitor's email client addressed to the team so the
-    // lead is never silently dropped when no endpoint is configured.
-    window.location.href = buildMailto(values);
-    toast.success("Opening your email app to send your request…");
-    reset();
+    try {
+      const res = await fetch(WEB3FORMS_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          access_key: WEB3FORMS_ACCESS_KEY,
+          subject: `New consultation request — ${values.firstName} ${values.lastName}`,
+          from_name: "One Source Funding website",
+          // So a reply from the notification goes straight to the lead.
+          replyto: values.email,
+          first_name: values.firstName,
+          last_name: values.lastName,
+          email: values.email,
+          phone: values.phone,
+          company: values.company || "—",
+          message: values.message || "—",
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; message?: string };
+      if (!res.ok || !data.success) {
+        throw new Error(data.message ?? `Bad response: ${res.status}`);
+      }
+      toast.success("Thanks! We received your request and will be in touch shortly.");
+      reset();
+    } catch {
+      // Last-ditch so a lead is never silently lost: point them at the inbox.
+      toast.error(`Something went wrong. Please email us directly at ${LEAD_EMAIL}.`);
+    }
   };
 
   return (
@@ -125,6 +140,19 @@ const GetStartedSection = () => {
             <h2 className="text-3xl md:text-4xl font-display font-bold mb-2">Get Started</h2>
             <p className="text-dark-section-foreground/70 mb-8">Complete the form for a Free Consultation.</p>
             <form className="space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
+              {/* Honeypot — visually and semantically hidden, off the tab order,
+                  and told to browsers not to autofill. A human never touches it;
+                  a bot that fills every field does. */}
+              <input
+                ref={honeypotRef}
+                type="text"
+                name="company_website"
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                className="hidden"
+                style={{ display: "none" }}
+              />
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label htmlFor="firstName" className="sr-only">First Name</label>
