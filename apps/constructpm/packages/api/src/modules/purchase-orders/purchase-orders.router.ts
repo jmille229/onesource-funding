@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
+import { parsePagination } from '../../lib/pagination.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const purchaseOrdersRouter = Router();
@@ -29,7 +30,8 @@ purchaseOrdersRouter.get('/', asyncHandler(async (req, res) => {
   const conds = ['po.deleted_at IS NULL'];
   const params: unknown[] = [];
   if (job_id) { params.push(job_id); conds.push(`po.job_id=$${params.length}`); }
-  const r = await db.query(`SELECT po.*,c.name vendor_name FROM purchase_orders po LEFT JOIN contacts c ON c.id=po.vendor_id WHERE ${conds.join(' AND ')} ORDER BY po.created_at DESC`, params);
+  params.push(parsePagination(req.query).limit);
+  const r = await db.query(`SELECT po.*,c.name vendor_name FROM purchase_orders po LEFT JOIN contacts c ON c.id=po.vendor_id WHERE ${conds.join(' AND ')} ORDER BY po.created_at DESC LIMIT $${params.length}`, params);
   res.json({ data: r.rows });
 }));
 

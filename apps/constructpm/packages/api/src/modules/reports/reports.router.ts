@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { readPool, createRlsClient } from '../../lib/db.js';
+import { parsePagination } from '../../lib/pagination.js';
 import { asyncHandler } from '../../middleware/index.js';
 
 export const reportsRouter = Router();
@@ -67,7 +68,9 @@ reportsRouter.get('/ar-aging', asyncHandler(async (req, res) => {
        END aging_bucket
      FROM invoices i JOIN contacts c ON c.id=i.customer_id
      WHERE i.deleted_at IS NULL AND i.status NOT IN ('void','draft')
-     ORDER BY i.due_date ASC`
+     ORDER BY i.due_date ASC
+     LIMIT $1`,
+    [parsePagination(req.query, { defaultPerPage: 1000, maxPerPage: 2000 }).limit]
   );
   res.json({ data: r.rows });
 }));

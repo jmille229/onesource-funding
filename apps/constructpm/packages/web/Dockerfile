@@ -18,7 +18,9 @@ ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build -w packages/shared && npm run build -w packages/web
 
 # ─── Production stage — nginx serving static files ────────────────────────────
-FROM nginx:1.25-alpine AS production
+# 1.28 is the current stable line; 1.25 left mainline in 2024 and no longer
+# receives fixes.
+FROM nginx:1.28-alpine AS production
 
 # Remove default nginx config
 RUN rm /etc/nginx/conf.d/default.conf

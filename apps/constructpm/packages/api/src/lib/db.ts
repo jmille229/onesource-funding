@@ -21,6 +21,23 @@ function buildSslConfig(): pg.ConnectionConfig['ssl'] {
     : { rejectUnauthorized: true };
 }
 
+/**
+ * Server-side query bounds, applied to every connection in every pool.
+ *
+ * The 30-second request deadline in middleware sends the client a 503 but
+ * cannot cancel work already running in Postgres — the connection stays busy
+ * until the query finishes on its own. Under load that is how a pool empties
+ * out. statement_timeout makes Postgres kill the statement itself, just under
+ * the request deadline so the client sees one clean error rather than a
+ * timeout followed by a late failure. idle_in_transaction_session_timeout
+ * closes a transaction whose client stopped talking mid-way (a crashed
+ * handler, a dropped connection), so it cannot hold row locks indefinitely.
+ */
+export const QUERY_BOUNDS = {
+  statement_timeout: 25_000,
+  idle_in_transaction_session_timeout: 30_000,
+} as const;
+
 function makePool(url: string, max = 20): pg.Pool {
   const pool = new pg.Pool({
     connectionString: url,
@@ -28,6 +45,7 @@ function makePool(url: string, max = 20): pg.Pool {
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
     ssl: buildSslConfig(),
+    ...QUERY_BOUNDS,
   });
   pool.on('error', (err) => console.error('[db] Pool error:', err.message));
   return pool;

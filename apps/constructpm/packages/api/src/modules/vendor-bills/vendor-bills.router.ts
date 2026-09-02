@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
+import { parsePagination } from '../../lib/pagination.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const vendorBillsRouter = Router();
@@ -27,7 +28,8 @@ vendorBillsRouter.get('/', asyncHandler(async (req, res) => {
   const params: unknown[] = [];
   const conds = ['vb.deleted_at IS NULL'];
   if (job_id) { params.push(job_id); conds.push(`vb.job_id=$${params.length}`); }
-  const r = await db.query(`SELECT vb.*,c.name vendor_name FROM vendor_bills vb LEFT JOIN contacts c ON c.id=vb.vendor_id WHERE ${conds.join(' AND ')} ORDER BY vb.bill_date DESC`, params);
+  params.push(parsePagination(req.query).limit);
+  const r = await db.query(`SELECT vb.*,c.name vendor_name FROM vendor_bills vb LEFT JOIN contacts c ON c.id=vb.vendor_id WHERE ${conds.join(' AND ')} ORDER BY vb.bill_date DESC LIMIT $${params.length}`, params);
   res.json({ data: r.rows });
 }));
 

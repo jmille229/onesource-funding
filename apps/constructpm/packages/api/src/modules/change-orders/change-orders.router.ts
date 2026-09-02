@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
+import { parsePagination } from '../../lib/pagination.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const changeOrdersRouter = Router();
@@ -21,7 +22,8 @@ changeOrdersRouter.get('/', asyncHandler(async (req, res) => {
   const conds = ['co.deleted_at IS NULL'];
   const params: unknown[] = [];
   if (job_id) { params.push(job_id); conds.push(`co.job_id=$${params.length}`); }
-  const r = await db.query(`SELECT co.*,c.name customer_name FROM change_orders co LEFT JOIN contacts c ON c.id=co.customer_id WHERE ${conds.join(' AND ')} ORDER BY co.created_at DESC`, params);
+  params.push(parsePagination(req.query).limit);
+  const r = await db.query(`SELECT co.*,c.name customer_name FROM change_orders co LEFT JOIN contacts c ON c.id=co.customer_id WHERE ${conds.join(' AND ')} ORDER BY co.created_at DESC LIMIT $${params.length}`, params);
   res.json({ data: r.rows });
 }));
 

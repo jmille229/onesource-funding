@@ -7,6 +7,7 @@ import { buildUpdateSet } from '../../lib/sql.js';
 import { isPlaceholderInvoiceNumber } from '../factoring/underwriting.js';
 import { scoreRequest } from '../factoring/underwriting.service.js';
 import { parseDelimited, toAdvancePayload } from './import-map.js';
+import { parsePagination } from '../../lib/pagination.js';
 import {
   asyncHandler, validate, authenticatePlatform, authRateLimit,
 } from '../../middleware/index.js';
@@ -252,13 +253,26 @@ adminRouter.post(
 );
 
 // ─── Advances ─────────────────────────────────────────────────────────────────
+const FACTORED_STATUSES = ['pending', 'advanced', 'collected', 'closed', 'charged_back'] as const;
+
 adminRouter.get('/invoices', asyncHandler(async (req, res) => {
   const { company_id, status } = req.query as Record<string, string>;
   const params: unknown[] = [];
   const conds: string[] = [];
   if (company_id) { params.push(company_id); conds.push(`fi.company_id = $${params.length}`); }
-  if (status)     { params.push(status);     conds.push(`fi.status = $${params.length}::factored_invoice_status`); }
+  if (status) {
+    // Validate before the enum cast: an unknown value used to fail inside
+    // Postgres and come back as a 500 rather than a 422.
+    if (!(FACTORED_STATUSES as readonly string[]).includes(status)) {
+      res.status(422).json({ error: 'validation_error', message: 'Unknown advance status' });
+      return;
+    }
+    params.push(status); conds.push(`fi.status = $${params.length}::factored_invoice_status`);
+  }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  // The operator's whole-book view is the feature, so the default is large
+  // (the imported portfolio is ~370 rows today); the cap is a safety net.
+  params.push(parsePagination(req.query, { defaultPerPage: 1000, maxPerPage: 5000 }).limit);
   const r = await pool().query(`
     SELECT fi.*, c.name AS company_name,
            (COALESCE(fi.collected_on, CURRENT_DATE) - fi.advanced_on) AS days_outstanding,
@@ -266,7 +280,8 @@ adminRouter.get('/invoices', asyncHandler(async (req, res) => {
       FROM factored_invoices fi
       JOIN companies c ON c.id = fi.company_id
       ${where}
-     ORDER BY fi.advanced_on DESC NULLS FIRST`, params);
+     ORDER BY fi.advanced_on DESC NULLS FIRST
+     LIMIT $${params.length}`, params);
   res.json({ data: r.rows });
 }));
 

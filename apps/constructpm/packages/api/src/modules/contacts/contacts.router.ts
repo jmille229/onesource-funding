@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
+import { parsePagination, escapeLike } from '../../lib/pagination.js';
 import { buildUpdateSet } from '../../lib/sql.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
@@ -31,8 +32,9 @@ contactsRouter.get('/', asyncHandler(async (req, res) => {
   const params: unknown[] = [];
   const conds = ['deleted_at IS NULL'];
   if (type) { params.push(type); conds.push(`type=$${params.length}`); }
-  if (search) { params.push(`%${search}%`); conds.push(`name ILIKE $${params.length}`); }
-  const r = await db.query(`SELECT * FROM contacts WHERE ${conds.join(' AND ')} ORDER BY name LIMIT 200`, params);
+  if (search) { params.push(`%${escapeLike(search)}%`); conds.push(`name ILIKE $${params.length}`); }
+  params.push(parsePagination(req.query).limit);
+  const r = await db.query(`SELECT * FROM contacts WHERE ${conds.join(' AND ')} ORDER BY name LIMIT $${params.length}`, params);
   res.json({ data: r.rows });
 }));
 
