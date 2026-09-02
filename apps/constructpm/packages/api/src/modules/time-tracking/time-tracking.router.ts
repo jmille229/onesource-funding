@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
+import { parsePagination } from '../../lib/pagination.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const timeTrackingRouter = Router();
@@ -30,7 +31,8 @@ timeTrackingRouter.get('/', asyncHandler(async (req, res) => {
   if (to) { params.push(to); conds.push(`te.work_date<=$${params.length}`); }
   if (approved !== undefined) { params.push(approved === 'true'); conds.push(`te.approved=$${params.length}`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-  const r = await db.query(`SELECT te.*,u.first_name||' '||u.last_name user_name FROM time_entries te LEFT JOIN users u ON u.id=te.user_id ${where} ORDER BY te.work_date DESC,te.created_at DESC`, params);
+  params.push(parsePagination(req.query).limit);
+  const r = await db.query(`SELECT te.*,u.first_name||' '||u.last_name user_name FROM time_entries te LEFT JOIN users u ON u.id=te.user_id ${where} ORDER BY te.work_date DESC,te.created_at DESC LIMIT $${params.length}`, params);
   res.json({ data: r.rows });
 }));
 

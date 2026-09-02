@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { readPool, createRlsClient, withTransaction } from '../../lib/db.js';
+import { parsePagination } from '../../lib/pagination.js';
 import { notify, OPS_INBOX } from '../../lib/mailer.js';
 import { asyncHandler, requireRole, validate } from '../../middleware/index.js';
 import { exposureLimit, type UnderwritingPolicy } from './underwriting.js';
@@ -140,7 +141,8 @@ factoringRouter.get('/invoices', requireRole(...FINANCE_ROLES), asyncHandler(asy
       : `WHERE fi.status IN ('pending','advanced')`;
 
   const r = await db.query(
-    `${INVOICE_SELECT} ${filter} ORDER BY fi.advanced_on DESC NULLS FIRST, fi.created_at DESC`);
+    `${INVOICE_SELECT} ${filter} ORDER BY fi.advanced_on DESC NULLS FIRST, fi.created_at DESC LIMIT $1`,
+    [parsePagination(req.query, { defaultPerPage: 500, maxPerPage: 1000 }).limit]);
   res.json({ data: r.rows });
 }));
 
@@ -179,7 +181,9 @@ factoringRouter.get('/requests', requireRole(...FINANCE_ROLES), asyncHandler(asy
     `SELECT fr.*, (SELECT COUNT(*) FROM file_attachments fa
                     WHERE fa.entity_type = 'funding_request' AND fa.entity_id = fr.id) AS document_count
        FROM funding_requests fr
-      ORDER BY fr.requested_at DESC`);
+      ORDER BY fr.requested_at DESC
+      LIMIT $1`,
+    [parsePagination(req.query, { defaultPerPage: 500, maxPerPage: 1000 }).limit]);
   res.json({ data: r.rows });
 }));
 

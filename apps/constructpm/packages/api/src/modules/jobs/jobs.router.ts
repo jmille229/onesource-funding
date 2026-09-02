@@ -2,15 +2,18 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
 import { buildUpdateSet } from '../../lib/sql.js';
+import { parsePagination, escapeLike } from '../../lib/pagination.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const jobsRouter = Router();
+
+const JOB_STATUSES = ['lead','bidding','awarded','active','on_hold','substantially_complete','closed','cancelled'] as const;
 
 const jobSchema = z.object({
   name: z.string().min(1).max(200),
   job_number: z.string().max(50).optional(),
   description: z.string().optional().nullable(),
-  status: z.enum(['lead','bidding','awarded','active','on_hold','substantially_complete','closed','cancelled']).default('lead'),
+  status: z.enum(JOB_STATUSES).default('lead'),
   contract_type: z.enum(['lump_sum','gmp','cost_plus_fixed','cost_plus_pct','time_and_materials','unit_price']).default('lump_sum'),
   contract_amount: z.number().min(0).optional().nullable(),
   start_date: z.string().optional().nullable(),
@@ -40,14 +43,25 @@ const PATCHABLE_JOB_COLUMNS = [
 
 // GET /api/jobs
 jobsRouter.get('/', asyncHandler(async (req, res) => {
-  const { status, search, page = '1', per_page = '25' } = req.query as Record<string,string>;
+  const { status, search } = req.query as Record<string,string>;
+  // Clamped: per_page=999999999 was an unbounded query, page=0 a negative
+  // OFFSET that Postgres rejected as a 500.
+  const { page: pg_num, per_page: pp, limit, offset } =
+    parsePagination(req.query, { defaultPerPage: 25, maxPerPage: 200 });
   const db = createRlsClient(readPool, req.auth.companyId);
   const params: unknown[] = [];
   const conds = ['j.deleted_at IS NULL'];
-  if (status) { params.push(status); conds.push(`j.status = $${params.length}`); }
-  if (search) { params.push(`%${search}%`); conds.push(`(j.name ILIKE $${params.length} OR j.job_number ILIKE $${params.length})`); }
-  const pg_num = parseInt(page); const pp = parseInt(per_page);
-  params.push(pp, (pg_num - 1) * pp);
+  if (status) {
+    // An unknown value would fail the enum cast inside Postgres and surface as
+    // a 500; say 422 here instead.
+    if (!(JOB_STATUSES as readonly string[]).includes(status)) {
+      res.status(422).json({ error: 'validation_error', message: 'Unknown job status' });
+      return;
+    }
+    params.push(status); conds.push(`j.status = $${params.length}`);
+  }
+  if (search) { params.push(`%${escapeLike(search)}%`); conds.push(`(j.name ILIKE $${params.length} OR j.job_number ILIKE $${params.length})`); }
+  params.push(limit, offset);
   const [rows, cnt] = await Promise.all([
     db.query(
       `SELECT j.*, c.name AS customer_name, u.first_name||' '||u.last_name AS project_manager_name,
@@ -89,8 +103,17 @@ jobsRouter.post('/', requireRole('owner','admin','project_manager'), validate(jo
   const jobId = await withTransaction(req.auth.companyId, async (client) => {
     let num = body.job_number;
     if (!num) {
-      const c = await client.query<{count:string}>(`SELECT COUNT(*) AS count FROM jobs WHERE company_id=$1`,[req.auth.companyId]);
-      num = `JOB-${String(parseInt(c.rows[0]?.count??'0')+1).padStart(4,'0')}`;
+      // Next number from the highest existing JOB-nnnn, not COUNT(*)+1: a
+      // count drifts from the max as soon as anyone supplies their own number
+      // or a numbered job is deleted, and then the generated value collides
+      // with UNIQUE (company_id, job_number). Two simultaneous creates can still
+      // race to the same number; that lands as 23505 and is reported as a 409
+      // below rather than a 500.
+      const c = await client.query<{ next: string }>(
+        `SELECT COALESCE(MAX(NULLIF(regexp_replace(job_number, '^JOB-', ''), job_number)::int), 0) + 1 AS next
+           FROM jobs WHERE company_id = $1 AND job_number ~ '^JOB-[0-9]+$'`,
+        [req.auth.companyId]);
+      num = `JOB-${String(c.rows[0]?.next ?? 1).padStart(4,'0')}`;
     }
     const r = await client.query<{id:string}>(
       `INSERT INTO jobs (company_id,name,job_number,description,status,contract_type,contract_amount,start_date,end_date,address_line1,city,state_code,zip,customer_id,project_manager_id,retainage_pct,prevailing_wage_required,created_by)
@@ -100,6 +123,11 @@ jobsRouter.post('/', requireRole('owner','admin','project_manager'), validate(jo
     const jid = r.rows[0]!.id;
     await client.query(`INSERT INTO budgets (company_id,job_id,name,status,created_by) VALUES ($1,$2,'Primary Budget','active',$3)`,[req.auth.companyId,jid,req.auth.userId]);
     return jid;
+  }).catch((err: { code?: string }) => {
+    if (err.code === '23505') {
+      throw Object.assign(new Error('A job with that number already exists — try again'), { status: 409 });
+    }
+    throw err;
   });
   const job = await createRlsClient(readPool,req.auth.companyId).query(`SELECT * FROM jobs WHERE id=$1`,[jobId]);
   res.status(201).json({ data: job.rows[0] });

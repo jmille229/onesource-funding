@@ -1,9 +1,21 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
+import { parsePagination } from '../../lib/pagination.js';
+import { buildUpdateSet } from '../../lib/sql.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const subcontractsRouter = Router();
+
+// SECURITY: explicit allowlist for the dynamic PATCH (see SECURITY.md — every
+// dynamic UPDATE goes through buildUpdateSet). The previous code interpolated
+// Object.keys(body) directly; Zod's strip mode made that safe in practice, but
+// the rule exists so safety does not depend on remembering which schema mode
+// is in force. company_id, id and created_by are deliberately absent.
+const PATCHABLE_SUBCONTRACT_COLUMNS = [
+  'job_id', 'subcontractor_id', 'subcontract_number', 'title', 'cost_code', 'scope',
+  'contract_amount', 'retainage_pct', 'status', 'start_date', 'end_date', 'executed_date', 'notes',
+] as const;
 
 const subSchema = z.object({
   job_id: z.string().uuid(),
@@ -57,13 +69,15 @@ subcontractsRouter.get('/', asyncHandler(async (req, res) => {
   const conds = ['s.deleted_at IS NULL'];
   if (job_id) { params.push(job_id); conds.push(`s.job_id = $${params.length}`); }
   if (status) { params.push(status); conds.push(`s.status = $${params.length}`); }
+  params.push(parsePagination(req.query).limit);
   const r = await db.query(
     `SELECT ${SELECT_COLS}
      FROM subcontracts s
      JOIN contacts c ON c.id = s.subcontractor_id
      ${TOTALS_JOIN}
      WHERE ${conds.join(' AND ')}
-     ORDER BY s.subcontract_number NULLS LAST, s.created_at DESC`,
+     ORDER BY s.subcontract_number NULLS LAST, s.created_at DESC
+     LIMIT $${params.length}`,
     params
   );
   res.json({ data: r.rows.map(coerce) });
@@ -124,10 +138,17 @@ subcontractsRouter.post('/', requireRole('owner', 'admin', 'project_manager'),
     const id = await withTransaction(req.auth.companyId, async (client) => {
       let num = body.subcontract_number;
       if (!num) {
-        const c = await client.query<{ count: string }>(
-          `SELECT COUNT(*) AS count FROM subcontracts WHERE job_id = $1`, [body.job_id]
+        // MAX of the existing SC-nnnn suffixes, not COUNT(*)+1 — the count
+        // drifts from the max as soon as anyone supplies their own number, and
+        // the generated value then collides with UNIQUE (company_id, job_id,
+        // subcontract_number). A true concurrent race still lands as 23505 and
+        // is reported as 409 below rather than a 500.
+        const c = await client.query<{ next: string }>(
+          `SELECT COALESCE(MAX(NULLIF(regexp_replace(subcontract_number, '^SC-', ''), subcontract_number)::int), 0) + 1 AS next
+             FROM subcontracts WHERE job_id = $1 AND subcontract_number ~ '^SC-[0-9]+$'`,
+          [body.job_id]
         );
-        num = `SC-${String(parseInt(c.rows[0]?.count ?? '0') + 1).padStart(4, '0')}`;
+        num = `SC-${String(c.rows[0]?.next ?? 1).padStart(4, '0')}`;
       }
       const r = await client.query<{ id: string }>(
         `INSERT INTO subcontracts
@@ -139,6 +160,11 @@ subcontractsRouter.post('/', requireRole('owner', 'admin', 'project_manager'),
          body.end_date ?? null, body.executed_date ?? null, body.notes ?? null, req.auth.userId]
       );
       return r.rows[0]!.id;
+    }).catch((err: { code?: string }) => {
+      if (err.code === '23505') {
+        throw Object.assign(new Error('A subcontract with that number already exists on this job — try again'), { status: 409 });
+      }
+      throw err;
     });
     const created = await createRlsClient(readPool, req.auth.companyId)
       .query(`SELECT * FROM subcontracts WHERE id = $1`, [id]);
@@ -149,13 +175,13 @@ subcontractsRouter.post('/', requireRole('owner', 'admin', 'project_manager'),
 subcontractsRouter.patch('/:id', requireRole('owner', 'admin', 'project_manager'),
   validate(subSchema.partial()), asyncHandler(async (req, res) => {
     const body = req.body as Record<string, unknown>;
-    const keys = Object.keys(body);
-    if (!keys.length) { res.status(422).json({ error: 'validation_error', message: 'Nothing to update' }); return; }
+    const { clause, values } = buildUpdateSet(body, PATCHABLE_SUBCONTRACT_COLUMNS);
+    if (!clause) { res.status(422).json({ error: 'validation_error', message: 'Nothing to update' }); return; }
     const db = createRlsClient(writePool, req.auth.companyId);
     const r = await db.query(
-      `UPDATE subcontracts SET ${keys.map((k, i) => `${k}=$${i + 2}`).join(',')}, updated_at=NOW()
+      `UPDATE subcontracts SET ${clause}, updated_at=NOW()
        WHERE id=$1 AND deleted_at IS NULL RETURNING *`,
-      [req.params['id'], ...keys.map((k) => body[k])]
+      [req.params['id'], ...values]
     );
     if (!r.rows[0]) { res.status(404).json({ error: 'not_found', message: 'Subcontract not found' }); return; }
     res.json({ data: r.rows[0] });

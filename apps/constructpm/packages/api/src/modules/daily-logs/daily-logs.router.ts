@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
+import { parsePagination } from '../../lib/pagination.js';
 import { buildUpdateSet } from '../../lib/sql.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
@@ -25,7 +26,8 @@ dailyLogsRouter.get('/', asyncHandler(async (req, res) => {
   const conds = ['dl.job_id=$1'];
   if (from) { params.push(from); conds.push(`dl.log_date>=$${params.length}`); }
   if (to) { params.push(to); conds.push(`dl.log_date<=$${params.length}`); }
-  const r = await db.query(`SELECT dl.*,u.first_name||' '||u.last_name created_by_name FROM daily_logs dl LEFT JOIN users u ON u.id=dl.created_by WHERE ${conds.join(' AND ')} ORDER BY dl.log_date DESC`, params);
+  params.push(parsePagination(req.query).limit);
+  const r = await db.query(`SELECT dl.*,u.first_name||' '||u.last_name created_by_name FROM daily_logs dl LEFT JOIN users u ON u.id=dl.created_by WHERE ${conds.join(' AND ')} ORDER BY dl.log_date DESC LIMIT $${params.length}`, params);
   res.json({ data: r.rows });
 }));
 

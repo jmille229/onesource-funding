@@ -31,6 +31,14 @@ const CONTACT_CUST2 = 'b8c9d0e1-f2a3-4567-bcde-0123456789e7';
 const CONTACT_VEN1  = 'c9d0e1f2-a3b4-5678-cdef-0123456789f8';
 
 async function seed() {
+  // SECURITY: this creates an owner account with a published password
+  // (demo1234). Refuse outright against a production database — a demo tenant
+  // with a known credential on the real box is a backdoor, however it got there.
+  if (process.env['NODE_ENV'] === 'production') {
+    console.error('❌ refusing to seed demo data with NODE_ENV=production');
+    process.exit(1);
+  }
+
   // SECURITY: Generate a real argon2id hash — no bcrypt, no plaintext backdoors
   console.log('  Hashing demo password (this takes a moment)...');
   const DEMO_HASH = await argon2.hash('demo1234', ARGON2_OPTS);

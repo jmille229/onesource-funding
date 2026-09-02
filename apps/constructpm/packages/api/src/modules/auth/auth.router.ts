@@ -1,10 +1,13 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { z } from 'zod';
 import argon2 from 'argon2';
 import { randomUUID, createHash } from 'crypto';
 import { readPool, writePool, withTransaction, createRlsClient } from '../../lib/db.js';
 import { signAccessToken } from '../../lib/jwt.js';
-import { asyncHandler, authRateLimit, authenticate, validate, logger } from '../../middleware/index.js';
+import {
+  asyncHandler, authRateLimit, refreshRateLimit, authenticate, validate, logger,
+} from '../../middleware/index.js';
+import type { UserRole } from '@constructpm/shared';
 
 export const authRouter = Router();
 
@@ -22,6 +25,40 @@ const COOKIE_OPTS = {
   maxAge: 90 * 86400 * 1000,
   path: '/api/auth',
 };
+
+/**
+ * Issues a complete session: a 15-minute access token in the body and a
+ * 90-day rotating refresh token in an httpOnly cookie.
+ *
+ * Login and register both go through here. Register used to return only the
+ * access token — no cookie — so a brand-new tenant was silently logged out
+ * fifteen minutes after signing up, with nothing for the SPA's silent refresh
+ * to fall back on. One code path means one set of session semantics.
+ */
+async function issueSession(
+  res: Response,
+  user: { id: string; company_id: string; role: UserRole }
+): Promise<string> {
+  const accessToken = signAccessToken({ userId: user.id, companyId: user.company_id, role: user.role });
+
+  const rawRefresh = randomUUID() + randomUUID();
+  const tokenHash = createHash('sha256').update(rawRefresh).digest('hex');
+  const familyId = randomUUID();
+  const expiry = new Date(Date.now() + 90 * 86400 * 1000);
+
+  // Writes are scoped to the user's own company so the RLS WITH CHECK passes.
+  await withTransaction(user.company_id, async (client) => {
+    await client.query(
+      `INSERT INTO refresh_tokens (company_id, user_id, token_hash, family_id, absolute_expiry)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [user.company_id, user.id, tokenHash, familyId, expiry]
+    );
+    await client.query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
+  });
+
+  res.cookie('refresh_token', rawRefresh, COOKIE_OPTS);
+  return accessToken;
+}
 
 // POST /api/auth/login
 authRouter.post(
@@ -59,29 +96,13 @@ authRouter.post(
       return;
     }
 
-    const accessToken = signAccessToken({
-      userId: String(user['id']),
-      companyId: String(user['company_id']),
-      role: user['role'] as never,
-    });
-
-    const rawRefresh = randomUUID() + randomUUID();
-    const tokenHash = createHash('sha256').update(rawRefresh).digest('hex');
-    const familyId = randomUUID();
-    const expiry = new Date(Date.now() + 90 * 86400 * 1000);
-
-    // Writes are scoped to the user's own company so the RLS WITH CHECK passes.
-    await withTransaction(String(user['company_id']), async (client) => {
-      await client.query(
-        `INSERT INTO refresh_tokens (company_id, user_id, token_hash, family_id, absolute_expiry)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [user['company_id'], user['id'], tokenHash, familyId, expiry]
-      );
-      await client.query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user['id']]);
+    const accessToken = await issueSession(res, {
+      id: String(user['id']),
+      company_id: String(user['company_id']),
+      role: user['role'] as UserRole,
     });
 
     logger.info({ user_id: user['id'] }, 'Login successful');
-    res.cookie('refresh_token', rawRefresh, COOKIE_OPTS);
     res.json({
       data: {
         access_token: accessToken,
@@ -101,8 +122,12 @@ authRouter.post(
 );
 
 // POST /api/auth/refresh
+// Rate limited per IP: each call is a database read and up to two writes, and
+// nothing else on this route needs a credential to reach the database. Looser
+// than login (see refreshRateLimit) because the SPA refreshes on every load.
 authRouter.post(
   '/refresh',
+  refreshRateLimit,
   asyncHandler(async (req, res) => {
     const raw = req.cookies?.['refresh_token'] as string | undefined;
     if (!raw) {
@@ -227,7 +252,7 @@ authRouter.post(
       throw err;
     }
 
-    const token = signAccessToken({ userId: uid, companyId: cid, role: 'owner' });
+    const token = await issueSession(res, { id: uid, company_id: cid, role: 'owner' });
     res.status(201).json({
       data: {
         access_token: token,

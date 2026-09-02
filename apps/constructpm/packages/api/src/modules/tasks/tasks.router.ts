@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
+import { parsePagination } from '../../lib/pagination.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const tasksRouter = Router();
@@ -23,12 +24,15 @@ tasksRouter.get('/', asyncHandler(async (req, res) => {
   const { job_id } = req.query as Record<string, string>;
   if (!job_id) { res.status(422).json({ error: 'validation_error', message: 'job_id required' }); return; }
   const db = createRlsClient(readPool, req.auth.companyId);
+  // One job's schedule is rendered whole, so the default is generous; the cap
+  // is a safety net against a runaway import, not a page size.
+  const { limit } = parsePagination(req.query, { defaultPerPage: 500, maxPerPage: 1000 });
   const [grps, tks] = await Promise.all([
-    db.query(`SELECT * FROM task_groups WHERE job_id=$1 AND deleted_at IS NULL ORDER BY sort_order`, [job_id]),
+    db.query(`SELECT * FROM task_groups WHERE job_id=$1 AND deleted_at IS NULL ORDER BY sort_order LIMIT $2`, [job_id, limit]),
     db.query(
       `SELECT t.*, COALESCE(json_agg(json_build_object('user_id',ta.user_id,'name',u.first_name||' '||u.last_name)) FILTER (WHERE ta.user_id IS NOT NULL),'[]') AS assignees
        FROM tasks t LEFT JOIN task_assignees ta ON ta.task_id=t.id LEFT JOIN users u ON u.id=ta.user_id
-       WHERE t.job_id=$1 AND t.deleted_at IS NULL GROUP BY t.id ORDER BY t.sort_order,t.created_at`, [job_id]
+       WHERE t.job_id=$1 AND t.deleted_at IS NULL GROUP BY t.id ORDER BY t.sort_order,t.created_at LIMIT $2`, [job_id, limit]
     ),
   ]);
   res.json({ data: { task_groups: grps.rows, tasks: tks.rows } });

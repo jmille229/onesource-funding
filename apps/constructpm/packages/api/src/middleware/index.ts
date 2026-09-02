@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import pino from 'pino';
 import { pinoHttp } from 'pino-http';
 import { z } from 'zod';
-import { RateLimiterRedis, RateLimiterMemory } from 'rate-limiter-flexible';
+import { RateLimiterRedis, RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import { verifyAccessToken, verifyPlatformToken } from '../lib/jwt.js';
 import { redis } from '../lib/redis.js';
 import type { AuthContext, UserRole } from '@constructpm/shared';
@@ -89,50 +89,77 @@ export function requireRole(...roles: UserRole[]) {
   };
 }
 
-// ─── Rate limiters — Redis-backed in production, memory fallback in dev ───────
+// ─── Rate limiters — Redis-backed, with an in-memory insurance limiter ────────
+//
+// AVAILABILITY: two changes from the previous design, both prompted by the
+// same failure. The old code (a) picked Redis-or-memory once, at first use,
+// based on whether Redis happened to be connected at that instant, and (b)
+// treated *any* rejection from consume() as "rate limited". A Redis outage
+// therefore meant every request on the box returned 429 until the process was
+// restarted. Now:
+//
+//   - RateLimiterRedis is always used, with `insuranceLimiter` — when Redis is
+//     unreachable it transparently counts in process memory instead. Per-process
+//     counting is weaker across replicas, but "slightly looser limits during a
+//     Redis blip" beats "total outage during a Redis blip".
+//   - The middleware distinguishes RateLimiterRes (a real over-limit) from an
+//     Error (infrastructure). Only the former is a 429; the latter fails open
+//     with a warning, because a broken limiter must not take the product down.
 function makeRateLimiter(opts: { points: number; duration: number; keyPrefix: string }) {
-  if (redis.status === 'ready') {
-    return new RateLimiterRedis({
-      storeClient: redis,
-      keyPrefix: opts.keyPrefix,
-      points: opts.points,
-      duration: opts.duration,
+  const insurance = new RateLimiterMemory({ points: opts.points, duration: opts.duration });
+  return new RateLimiterRedis({
+    storeClient: redis,
+    keyPrefix: opts.keyPrefix,
+    points: opts.points,
+    duration: opts.duration,
+    insuranceLimiter: insurance,
+  });
+}
+
+const tenantLimiter  = makeRateLimiter({ points: 500, duration: 60, keyPrefix: 'rl:tenant' });
+const authLimiter    = makeRateLimiter({ points: 10,  duration: 60, keyPrefix: 'rl:auth' });
+// Looser than login: the SPA refreshes on every page load and on every 401, and
+// an office of ten people behind one NAT address must not trip it. Still
+// bounded, because each refresh is a database read and up to two writes.
+const refreshLimiter = makeRateLimiter({ points: 60,  duration: 60, keyPrefix: 'rl:refresh' });
+
+function limit(
+  limiter: RateLimiterRedis,
+  key: string,
+  res: Response,
+  next: NextFunction,
+  tooMany: { error: string; message: string }
+) {
+  limiter.consume(key)
+    .then(() => next())
+    .catch((rej: unknown) => {
+      if (rej instanceof RateLimiterRes) {
+        res.setHeader('Retry-After', String(Math.ceil(rej.msBeforeNext / 1000) || 1));
+        res.status(429).json(tooMany);
+        return;
+      }
+      // Both Redis and the memory insurance failed — this should not happen,
+      // but if it does the right failure mode is open, not a hard outage.
+      logger.warn({ err: rej }, 'rate limiter unavailable — failing open');
+      next();
     });
-  }
-  // Fallback: in-memory (dev only)
-  return new RateLimiterMemory({ points: opts.points, duration: opts.duration });
-}
-
-// Lazy-initialized so Redis has time to connect
-let _tenantLimiter: RateLimiterRedis | RateLimiterMemory | null = null;
-let _authLimiter:   RateLimiterRedis | RateLimiterMemory | null = null;
-
-function getTenantLimiter() {
-  if (!_tenantLimiter) _tenantLimiter = makeRateLimiter({ points: 500, duration: 60, keyPrefix: 'rl:tenant' });
-  return _tenantLimiter;
-}
-function getAuthLimiter() {
-  if (!_authLimiter) _authLimiter = makeRateLimiter({ points: 10, duration: 60, keyPrefix: 'rl:auth' });
-  return _authLimiter;
 }
 
 export function tenantRateLimit(req: Request, res: Response, next: NextFunction) {
   const key = req.auth?.companyId ?? req.ip ?? 'unknown';
-  getTenantLimiter().consume(key)
-    .then(() => next())
-    .catch(() => {
-      res.status(429).json({ error: 'rate_limit_exceeded', message: 'Too many requests. Please slow down.' });
-    });
+  limit(tenantLimiter, key, res, next,
+    { error: 'rate_limit_exceeded', message: 'Too many requests. Please slow down.' });
 }
 
 export function authRateLimit(req: Request, res: Response, next: NextFunction) {
   // Rate limit by IP for login attempts
-  const key = `${req.ip ?? 'unknown'}`;
-  getAuthLimiter().consume(key)
-    .then(() => next())
-    .catch(() => {
-      res.status(429).json({ error: 'too_many_requests', message: 'Too many login attempts. Try again in 1 minute.' });
-    });
+  limit(authLimiter, req.ip ?? 'unknown', res, next,
+    { error: 'too_many_requests', message: 'Too many login attempts. Try again in 1 minute.' });
+}
+
+export function refreshRateLimit(req: Request, res: Response, next: NextFunction) {
+  limit(refreshLimiter, req.ip ?? 'unknown', res, next,
+    { error: 'too_many_requests', message: 'Too many session refreshes. Try again shortly.' });
 }
 
 // ─── Request timeout ─────────────────────────────────────────────────────────

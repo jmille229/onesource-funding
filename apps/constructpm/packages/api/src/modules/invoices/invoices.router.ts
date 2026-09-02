@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
+import { parsePagination } from '../../lib/pagination.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const invoicesRouter = Router();
@@ -30,7 +31,8 @@ invoicesRouter.get('/', asyncHandler(async (req, res) => {
   const conds = ['i.deleted_at IS NULL'];
   if (job_id) { params.push(job_id); conds.push(`i.job_id=$${params.length}`); }
   if (status) { params.push(status); conds.push(`i.status=$${params.length}`); }
-  const r = await db.query(`SELECT i.*,c.name customer_name FROM invoices i LEFT JOIN contacts c ON c.id=i.customer_id WHERE ${conds.join(' AND ')} ORDER BY i.issue_date DESC`, params);
+  params.push(parsePagination(req.query).limit);
+  const r = await db.query(`SELECT i.*,c.name customer_name FROM invoices i LEFT JOIN contacts c ON c.id=i.customer_id WHERE ${conds.join(' AND ')} ORDER BY i.issue_date DESC LIMIT $${params.length}`, params);
   res.json({ data: r.rows });
 }));
 

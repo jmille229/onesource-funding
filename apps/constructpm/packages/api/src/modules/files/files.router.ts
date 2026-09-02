@@ -13,6 +13,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'crypto';
+import { validate as isUuid } from 'uuid';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
 import { asyncHandler, requireRole, logger } from '../../middleware/index.js';
 import { env } from '../../lib/env.js';
@@ -93,6 +94,32 @@ const HEADER_ONLY_TYPES = new Set(['text/csv', 'text/plain']);
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
 
+// ─── Entity reference validation ─────────────────────────────────────────────
+// entity_type and entity_id come from multipart form fields and used to be
+// interpolated into the S3 object key unchecked, so `entity_type=../x` or a
+// kilobyte of junk landed in the key path and in the file_attachments row.
+// Both are now validated: the type against the things a file can actually be
+// attached to, the id as a UUID. (Object keys are still prefixed with the
+// caller's company_id from the JWT, so cross-tenant *writes* were never
+// possible; this closes the sloppiness, not a leak.)
+const ENTITY_TYPES = new Set([
+  'job', 'invoice', 'daily_log', 'change_order', 'vendor_bill', 'purchase_order',
+  'subcontract', 'contact', 'task',
+  // Factoring: the client uploads against the invoice id as a draft, and the
+  // request handler re-keys the row to the funding_request once it exists.
+  'funding_request_draft', 'funding_request',
+]);
+
+function assertEntityRef(entity_type: unknown, entity_id: unknown): { entity_type: string; entity_id: string } {
+  if (typeof entity_type !== 'string' || !ENTITY_TYPES.has(entity_type)) {
+    throw Object.assign(new Error('entity_type is not a recognised attachment target'), { status: 422 });
+  }
+  if (typeof entity_id !== 'string' || !isUuid(entity_id)) {
+    throw Object.assign(new Error('entity_id must be a UUID'), { status: 422 });
+  }
+  return { entity_type, entity_id };
+}
+
 // ─── POST /api/files/upload ───────────────────────────────────────────────────
 // SECURITY FIX: Streams directly to S3 — no full file buffer in process memory.
 // The approach:
@@ -124,7 +151,17 @@ filesRouter.post(
         let totalBytes = 0;
         let fieldsDone = false;
         let fileDone = false;
+        let sawFile = false;
         const fields: Record<string, string> = {};
+
+        // AVAILABILITY: if the client goes away mid-upload, settle the promise
+        // so the `finally` below releases the concurrency slot. Without this a
+        // dropped connection could pin a slot until the request deadline — and
+        // the deadline only ends the *response*, not this promise.
+        req.on('aborted', () => {
+          uploadAborted = true;
+          reject(Object.assign(new Error('Upload aborted by client'), { status: 400 }));
+        });
 
         const bb = busboy({
           headers: req.headers,
@@ -141,6 +178,7 @@ filesRouter.post(
         bb.on('fieldsLimit', () => reject(new Error('Too many form fields')));
 
         bb.on('file', async (_fieldname, fileStream, info) => {
+          sawFile = true;
           const { filename, mimeType } = info;
           const claimedMime = mimeType?.split(';')[0]?.trim() ?? '';
 
@@ -230,12 +268,10 @@ filesRouter.post(
             await validate();
 
             // Validate form fields
-            const { entity_type, entity_id, job_id } = fields;
-            if (!entity_type || !entity_id) {
-              throw Object.assign(
-                new Error('entity_type and entity_id are required'),
-                { status: 422 }
-              );
+            const { entity_type, entity_id } = assertEntityRef(fields['entity_type'], fields['entity_id']);
+            const job_id = fields['job_id'];
+            if (job_id !== undefined && !isUuid(job_id)) {
+              throw Object.assign(new Error('job_id must be a UUID'), { status: 422 });
             }
 
             // SECURITY FIX: Verify entity ownership before attaching files.
@@ -315,6 +351,16 @@ filesRouter.post(
 
         bb.on('finish', () => {
           fieldsDone = true;
+          // AVAILABILITY FIX: a multipart body with fields but no file part used
+          // to leave this promise pending forever — `fileDone` never became true,
+          // nothing rejected, and the `finally` that decrements activeUploads
+          // never ran. Ten such requests and every upload on the box was a 503
+          // until the API restarted. Any authenticated user could do it by
+          // accident with a mis-built form.
+          if (!sawFile) {
+            reject(Object.assign(new Error('No file was included in the request'), { status: 422 }));
+            return;
+          }
           if (fileDone) resolve();
         });
 
@@ -337,11 +383,7 @@ filesRouter.post(
 filesRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { entity_type, entity_id } = req.query as Record<string, string>;
-    if (!entity_type || !entity_id) {
-      res.status(422).json({ error: 'validation_error', message: 'entity_type and entity_id are required' });
-      return;
-    }
+    const { entity_type, entity_id } = assertEntityRef(req.query['entity_type'], req.query['entity_id']);
     const db = createRlsClient(readPool, req.auth.companyId);
     const result = await db.query(
       `SELECT fa.*, u.first_name || ' ' || u.last_name AS uploaded_by_name
@@ -411,7 +453,9 @@ filesRouter.get(
 
     // SECURITY: serve the MIME type we recorded at upload (magic-byte verified),
     // never a client-supplied one, and force download rather than inline render.
-    res.setHeader('Content-Type', String(attachment['mime_type'] ?? 'application/octet-stream'));
+    // The column is content_type; this read `mime_type`, which does not exist,
+    // so every download went out as application/octet-stream regardless.
+    res.setHeader('Content-Type', String(attachment['content_type'] ?? 'application/octet-stream'));
     res.setHeader('Content-Disposition', disposition);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (object.ContentLength) res.setHeader('Content-Length', String(object.ContentLength));

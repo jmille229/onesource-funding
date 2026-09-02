@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { env } from './env.js';
+import { QUERY_BOUNDS } from './db.js';
 
 /**
  * Connection pool for the factoring operator role.
@@ -20,6 +21,7 @@ export const adminPool: pg.Pool | null = env.ADMIN_DATABASE_URL
       max: 5,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 5_000,
+      ...QUERY_BOUNDS,
       ssl: env.DATABASE_SSL
         ? (env.DATABASE_SSL_CA
             ? { rejectUnauthorized: true, ca: env.DATABASE_SSL_CA }
