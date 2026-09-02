@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
 import { parsePagination } from '../../lib/pagination.js';
+import { uuidParam } from '../../lib/query-params.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const timeTrackingRouter = Router();
@@ -21,7 +22,9 @@ const entrySchema = z.object({
 });
 
 timeTrackingRouter.get('/', asyncHandler(async (req, res) => {
-  const { job_id, user_id, from, to, approved } = req.query as Record<string, string>;
+  const { from, to, approved } = req.query as Record<string, string>;
+  const job_id = uuidParam(req.query['job_id'], 'job_id');
+  const user_id = uuidParam(req.query['user_id'], 'user_id');
   const db = createRlsClient(readPool, req.auth.companyId);
   const params: unknown[] = [];
   const conds: string[] = [];
@@ -59,7 +62,8 @@ timeTrackingRouter.delete('/:id', requireRole('owner','admin','project_manager')
 
 // ─── Weekly summary ───────────────────────────────────────────────────────────
 timeTrackingRouter.get('/summary/weekly', asyncHandler(async (req, res) => {
-  const { job_id, week_start } = req.query as Record<string, string>;
+  const { week_start } = req.query as Record<string, string>;
+  const job_id = uuidParam(req.query['job_id'], 'job_id');
   const db = createRlsClient(readPool, req.auth.companyId);
   const params: unknown[] = [];
   const conds: string[] = [];
