@@ -782,6 +782,20 @@ adminRouter.post(
         companyId: String(b['company_id']), after: r.rows[0], ip: req.ip ?? null,
       });
       return r.rows[0]!;
+    }).catch((err: { code?: string; constraint?: string }) => {
+      // 23503 = foreign key violation: an unknown company_id or debtor_id.
+      if (err.code === '23503') {
+        throw Object.assign(
+          new Error('That client or agency is not set up in the system yet'), { status: 422 });
+      }
+      // 23514 = check violation. The anchor constraint is the only one this
+      // insert can trip; give a straight answer rather than a generic 500.
+      if (err.code === '23514') {
+        throw Object.assign(
+          new Error('This request could not be recorded — check the client and amount and try again'),
+          { status: 422 });
+      }
+      throw err;
     });
 
     const decision = await scoreRequest(created['id'] as string);
