@@ -2,9 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
 import { parsePagination } from '../../lib/pagination.js';
+import { enumParam, uuidParam } from '../../lib/query-params.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const invoicesRouter = Router();
+
+const INVOICE_STATUSES = ['draft','sent','viewed','partially_paid','paid','overdue','void'] as const;
 
 const lineSchema = z.object({
   id: z.string().uuid().optional(),
@@ -25,7 +28,8 @@ const schema = z.object({
 });
 
 invoicesRouter.get('/', asyncHandler(async (req, res) => {
-  const { job_id, status } = req.query as Record<string, string>;
+  const job_id = uuidParam(req.query['job_id'], 'job_id');
+  const status = enumParam(req.query['status'], INVOICE_STATUSES, 'status');
   const db = createRlsClient(readPool, req.auth.companyId);
   const params: unknown[] = [];
   const conds = ['i.deleted_at IS NULL'];

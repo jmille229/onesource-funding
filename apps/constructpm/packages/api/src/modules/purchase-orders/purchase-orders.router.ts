@@ -2,9 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
 import { parsePagination } from '../../lib/pagination.js';
+import { enumParam, uuidParam } from '../../lib/query-params.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const purchaseOrdersRouter = Router();
+
+const PO_STATUSES = ['draft','sent','acknowledged','partially_billed','fully_billed','closed'] as const;
 
 const poSchema = z.object({
   job_id: z.string().uuid(),
@@ -25,7 +28,7 @@ const poSchema = z.object({
 });
 
 purchaseOrdersRouter.get('/', asyncHandler(async (req, res) => {
-  const { job_id } = req.query as Record<string, string>;
+  const job_id = uuidParam(req.query['job_id'], 'job_id');
   const db = createRlsClient(readPool, req.auth.companyId);
   const conds = ['po.deleted_at IS NULL'];
   const params: unknown[] = [];
@@ -65,7 +68,10 @@ purchaseOrdersRouter.post('/', requireRole('owner','admin','project_manager','ac
 }));
 
 purchaseOrdersRouter.patch('/:id/status', requireRole('owner','admin'), asyncHandler(async (req, res) => {
-  const { status } = req.body as { status: string };
+  // Was unvalidated: an unknown status cast to the po_status enum and came back
+  // as a 500. changeOrders already guarded this; purchaseOrders did not.
+  const status = enumParam((req.body as { status?: unknown }).status, PO_STATUSES, 'status');
+  if (!status) { res.status(422).json({ error: 'validation_error', message: 'status is required' }); return; }
   const db = createRlsClient(writePool, req.auth.companyId);
   const r = await db.query(`UPDATE purchase_orders SET status=$2,updated_at=NOW() WHERE id=$1 RETURNING *`, [req.params['id'], status]);
   if (!r.rows[0]) { res.status(404).json({ error: 'not_found', message: 'PO not found' }); return; }

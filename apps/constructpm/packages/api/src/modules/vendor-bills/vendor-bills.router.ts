@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
 import { parsePagination } from '../../lib/pagination.js';
+import { uuidParam } from '../../lib/query-params.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const vendorBillsRouter = Router();
@@ -23,7 +24,7 @@ const schema = z.object({
 });
 
 vendorBillsRouter.get('/', asyncHandler(async (req, res) => {
-  const { job_id } = req.query as Record<string, string>;
+  const job_id = uuidParam(req.query['job_id'], 'job_id');
   const db = createRlsClient(readPool, req.auth.companyId);
   const params: unknown[] = [];
   const conds = ['vb.deleted_at IS NULL'];

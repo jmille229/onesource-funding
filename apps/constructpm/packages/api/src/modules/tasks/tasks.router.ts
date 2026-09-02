@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
 import { parsePagination } from '../../lib/pagination.js';
+import { uuidParam } from '../../lib/query-params.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const tasksRouter = Router();
@@ -21,7 +22,7 @@ const taskSchema = z.object({
 });
 
 tasksRouter.get('/', asyncHandler(async (req, res) => {
-  const { job_id } = req.query as Record<string, string>;
+  const job_id = uuidParam(req.query['job_id'], 'job_id');
   if (!job_id) { res.status(422).json({ error: 'validation_error', message: 'job_id required' }); return; }
   const db = createRlsClient(readPool, req.auth.companyId);
   // One job's schedule is rendered whole, so the default is generous; the cap

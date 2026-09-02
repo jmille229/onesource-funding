@@ -2,10 +2,13 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
 import { parsePagination, escapeLike } from '../../lib/pagination.js';
+import { enumParam } from '../../lib/query-params.js';
 import { buildUpdateSet } from '../../lib/sql.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 
 export const contactsRouter = Router();
+
+const CONTACT_TYPES = ['customer','vendor','subcontractor','both'] as const;
 
 const schema = z.object({
   name: z.string().min(1).max(200),
@@ -27,7 +30,8 @@ const PATCHABLE_CONTACT_COLUMNS = [
 ] as const;
 
 contactsRouter.get('/', asyncHandler(async (req, res) => {
-  const { type, search } = req.query as Record<string, string>;
+  const { search } = req.query as Record<string, string>;
+  const type = enumParam(req.query['type'], CONTACT_TYPES, 'type');
   const db = createRlsClient(readPool, req.auth.companyId);
   const params: unknown[] = [];
   const conds = ['deleted_at IS NULL'];
