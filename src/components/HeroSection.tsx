@@ -58,15 +58,16 @@ const HeroSection = () => {
             {/* Leads with the reader's problem rather than our name. They already
                 know who they are; they don't yet know we solve this. */}
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-display font-bold text-primary-foreground leading-[1.1] tracking-tight mb-5 text-balance">
-              Tired of waiting 30, 60, 90+ days to get paid?
+              You did the work, why wait to get paid?
             </h1>
 
             {/* Bumped from /80 to /90 and capped near 60 characters per line —
                 the comfortable measure for sustained reading. */}
             <p className="text-primary-foreground/90 text-base md:text-lg leading-relaxed mb-8 max-w-xl">
-              For government vendors and contractors, One Source Funding is the easy
-              solution to your cash flow needs. We turn invoices for completed work
-              into cash — so you stop financing the agency&rsquo;s payment cycle.
+              For government vendors and contractors tired of waiting 30, 60, 90+ days,
+              One Source Funding is the easy solution to your cash flow needs. We turn
+              invoices for completed work into cash — so you stop financing the
+              agency&rsquo;s payment cycle.
             </p>
 
             <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4">
