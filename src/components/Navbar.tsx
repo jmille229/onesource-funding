@@ -37,6 +37,15 @@ const Navbar = () => {
 
         {/* Desktop Nav */}
         <div className="hidden lg:flex items-center gap-1">
+          {/* The software front door. A real destination among the placeholder
+              dropdowns — this is the second entry point for contractors who want
+              the free project/invoice app rather than factoring. */}
+          <a
+            href="/software"
+            className="px-4 py-2 text-sm font-medium text-foreground hover:text-accent transition-colors rounded-md"
+          >
+            Software
+          </a>
           {navItems.map((item) => (
             <div
               key={item.label}
@@ -76,7 +85,7 @@ const Navbar = () => {
 
         <div className="hidden lg:flex items-center gap-2">
           <a
-            href={APP_URL}
+            href={`${APP_URL}/login`}
             className="px-4 py-2 text-sm font-medium text-foreground hover:text-accent transition-colors rounded-md"
           >
             Log in
@@ -100,6 +109,12 @@ const Navbar = () => {
       {mobileOpen && (
         <div className="lg:hidden bg-card border-t border-border animate-fade-in">
           <div className="px-4 py-4 space-y-2">
+            <a
+              href="/software"
+              className="block px-3 py-2.5 text-sm font-medium text-foreground hover:text-accent rounded-md"
+            >
+              Software
+            </a>
             {navItems.map((item) => (
               <div key={item.label}>
                 <a
@@ -111,7 +126,7 @@ const Navbar = () => {
               </div>
             ))}
             <a
-              href={APP_URL}
+              href={`${APP_URL}/login`}
               className="block w-full text-center px-3 py-2.5 text-sm font-medium text-foreground hover:text-accent rounded-md border border-border mt-4"
             >
               Log in
