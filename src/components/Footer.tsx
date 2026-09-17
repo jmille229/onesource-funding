@@ -5,7 +5,7 @@ import { CONTACT } from "@/lib/contact";
 const footerLinks = {
   Company: ["About Us", "Our Team", "Careers", "Contact Us"],
   Partner: ["Referral Program", "Broker Program", "CPA Program"],
-  "Invoice Factoring": ["What is Factoring", "How It Works", "Industries", "Freight Factoring"],
+  "Invoice Funding": ["What is Invoice Funding", "How It Works", "Industries", "Freight Funding"],
   Resources: ["Blog", "FAQs", "Calculator", "Case Studies"],
 };
 
@@ -39,7 +39,7 @@ const Footer = () => (
             <img src="/logo.png" alt="One Source Funding" className="h-12 brightness-0 invert" />
           </div>
           <p className="text-primary-foreground/60 text-sm leading-relaxed mb-5">
-            Invoice factoring built exclusively for U.S. government contractors.
+            Specialty finance built exclusively for U.S. government contractors.
           </p>
 
           {/* Contact block. Both channels visible together because they answer

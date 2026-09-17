@@ -4,13 +4,13 @@ import { ArrowRight } from "lucide-react";
 const posts = [
   {
     tag: "Cash Flow",
-    title: "What Is Micro Factoring?",
+    title: "What Is Micro Funding?",
     excerpt: "Do you need working capital now? Running a small business or startup typically means navigating unique financial challenges...",
     date: "Feb 16, 2026",
   },
   {
     tag: "Business Growth",
-    title: "Line of Credit vs. Invoice Factoring",
+    title: "Line of Credit vs. Invoice Funding",
     excerpt: "Which funding option is right for you? For any small business owner, understanding the difference between these two options is key...",
     date: "Feb 5, 2026",
   },

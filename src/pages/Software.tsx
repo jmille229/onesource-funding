@@ -11,19 +11,19 @@ import Footer from "@/components/Footer";
 /**
  * /software — the second front door.
  *
- * The homepage sells factoring to a contractor with a cash crunch *today*. This
+ * The homepage sells funding to a contractor with a cash crunch *today*. This
  * page sells the free project-and-invoice software to a contractor who just
- * wants to run their jobs better and may never factor. They are different buyers
- * in different mindsets, and one page cannot serve both — a software-curious
- * visitor bounces off a page headlined "Invoice Factoring."
+ * wants to run their jobs better and may never need funding. They are different
+ * buyers in different mindsets, and one page cannot serve both — a
+ * software-curious visitor bounces off a page headlined "Invoice Funding."
  *
  * Strategy (one brand, two doors): the software is genuinely free, with no
- * factoring strings. Every contractor who runs their invoicing here is someone
- * whose cash-flow we can see — the best-qualified, best-timed factoring lead
+ * funding strings. Every contractor who runs their invoicing here is someone
+ * whose cash-flow we can see — the best-qualified, best-timed funding lead
  * there is. So the funnel works precisely *because* most of these users never
- * factor. The "Why it's free" section says that out loud, because transparency
- * is the differentiator in a category full of factors who cold-call the day you
- * sign your first contract.
+ * need funding. The "Why it's free" section says that out loud, because
+ * transparency is the differentiator in a category full of lenders who
+ * cold-call the day you sign your first contract.
  *
  * Front door only: CTAs go to the app's own self-serve sign-up. The contextual
  * in-app funding offer (keyed on invoice age / agency slowdown) is a separate,
@@ -168,7 +168,8 @@ const Software = () => {
                 Why it&rsquo;s free
               </h2>
               <p className="text-muted-foreground leading-relaxed mb-4">
-                Because we&rsquo;re a factoring company, not a software company. We
+                Because we&rsquo;re a specialty finance company, not a software
+                company. We
                 make our money the day a contractor decides they&rsquo;d rather not
                 wait 60 or 90 days for an agency to pay — so we give away the
                 software that helps you run a healthy business, and we&rsquo;re here
@@ -184,7 +185,7 @@ const Software = () => {
                 {[
                   "Free to use, indefinitely",
                   "No access to your accounting or payroll",
-                  "No obligation to ever factor an invoice",
+                  "No obligation to ever request funding",
                   "Funding available inside the app when you want it",
                 ].map((item) => (
                   <li key={item} className="flex gap-2.5 text-sm text-foreground/90">

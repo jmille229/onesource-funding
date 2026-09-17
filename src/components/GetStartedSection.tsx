@@ -9,7 +9,7 @@ import { toast } from "sonner";
 const services = [
   {
     icon: FileText,
-    title: "Invoice Factoring",
+    title: "Invoice Funding",
     description: "Purchase of accounts receivable for immediate cash. Grow without diluting equity or incurring debt.",
   },
   {

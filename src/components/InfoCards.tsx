@@ -4,9 +4,9 @@ import { motion } from "framer-motion";
 const cards = [
   {
     icon: FileText,
-    title: "What is Factoring",
-    description: "Factoring is the purchase of accounts receivable for immediate cash, empowering businesses to grow without diluting equity or incurring debt.",
-    link: "#what-is-factoring",
+    title: "What is Invoice Funding",
+    description: "Invoice funding is the purchase of your accounts receivable for immediate cash, empowering businesses to grow without diluting equity or incurring debt.",
+    link: "#what-is-funding",
   },
   {
     icon: Shield,
@@ -16,8 +16,8 @@ const cards = [
   },
   {
     icon: HelpCircle,
-    title: "Factoring FAQ",
-    description: "We want to address any questions you might have regarding our program. Find answers to common questions about invoice factoring.",
+    title: "Funding FAQ",
+    description: "We want to address any questions you might have regarding our program. Find answers to common questions about invoice funding.",
     link: "#faq",
   },
 ];
