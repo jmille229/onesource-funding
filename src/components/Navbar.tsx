@@ -8,7 +8,7 @@ const APP_URL = (import.meta.env.VITE_APP_URL as string | undefined) ?? "https:/
 const navItems = [
   {
     label: "Services",
-    children: ["Invoice Factoring", "Credit Services", "Receivables Management"],
+    children: ["Invoice Funding", "Credit Services", "Receivables Management"],
   },
   {
     label: "Industries",
@@ -16,7 +16,7 @@ const navItems = [
   },
   {
     label: "Resources",
-    children: ["Blog", "FAQs", "Factoring Calculator", "Case Studies"],
+    children: ["Blog", "FAQs", "Funding Calculator", "Case Studies"],
   },
   {
     label: "Why Us?",
@@ -40,7 +40,7 @@ const Navbar = () => {
         <div className="hidden lg:flex items-center gap-1">
           {/* The software front door. A real destination among the placeholder
               dropdowns — this is the second entry point for contractors who want
-              the free project/invoice app rather than factoring. */}
+              the free project/invoice app rather than funding. */}
           <a
             href="/software"
             className="px-4 py-2 text-sm font-medium text-foreground hover:text-accent transition-colors rounded-md"

@@ -31,7 +31,7 @@ const DifferenceSection = () => (
             Built for Government Contractors
           </h2>
           <p className="text-muted-foreground leading-relaxed mb-4">
-            One Source Funding provides non-recourse invoice factoring built specifically for contractors serving federal, state, and local government agencies. We turn your government receivables into working capital — fast.
+            One Source Funding provides non-recourse invoice funding built specifically for contractors serving federal, state, and local government agencies. We turn your government receivables into working capital — fast.
           </p>
           <p className="text-muted-foreground leading-relaxed mb-8">
             We understand government payment cycles and the paperwork that comes with them. Our team works directly with government contractors to fund invoices in hours — not the 30, 60, or 90+ days agencies often take to pay.
