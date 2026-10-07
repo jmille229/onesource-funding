@@ -136,8 +136,9 @@ const SECTIONS: Array<{ title: string; items: QA[] }> = [
         q: "How much of my invoice do I get upfront?",
         a: (
           <>
-            Most of it — typically around 80% of the invoice amount. The remaining
-            balance, minus our fee, comes to you when the agency pays.
+            Most of it — typically 80% of the invoice amount, and up to 90% in some
+            cases. The remaining balance, minus our fee, comes to you when the agency
+            pays.
           </>
         ),
       },
@@ -183,9 +184,20 @@ const SECTIONS: Array<{ title: string; items: QA[] }> = [
           <>
             Government agencies paying late is exactly why invoice funding exists, so
             it&rsquo;s expected. Because the fee is tied to how long the agency takes, a
-            slower payment does cost more. Your agreement spells out what happens if an
-            invoice stays unpaid for a long time, and we&rsquo;ll walk you through it
-            before you sign.
+            slower payment does cost more. Your agreement spells out how long an invoice
+            can stay outstanding, and we&rsquo;ll walk you through it before you sign.
+          </>
+        ),
+      },
+      {
+        q: "What if the agency never pays?",
+        a: (
+          <>
+            Our funding is full recourse. If an agency doesn&rsquo;t pay a funded invoice
+            within the time set out in your agreement, you&rsquo;re responsible for paying
+            back the advance on that invoice. We tell you that upfront because it&rsquo;s
+            the honest answer. With government agencies it rarely comes to that — they
+            almost always pay; the issue is how long they take.
           </>
         ),
       },

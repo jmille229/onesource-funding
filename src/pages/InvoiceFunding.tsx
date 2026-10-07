@@ -9,7 +9,8 @@ import ContentPage, { Callout, H2, List, P, TextLink } from "@/components/Conten
  * definition.
  *
  * The example's numbers are illustrative, not a quote — it says so on the page.
- * "Typically around 80%" matches the advance most clients actually receive.
+ * Advance: typically 80%, up to 90% in some circumstances. Funding is full
+ * recourse, and the page says so plainly rather than leaving it to the contract.
  */
 
 const InvoiceFunding = () => (
@@ -59,7 +60,7 @@ const InvoiceFunding = () => (
         ordered
         items={[
           "You send us the $12,000 invoice, along with the contract or purchase order behind it.",
-          <>We advance you most of it upfront — typically around 80%, so roughly <strong>$9,600</strong> in your account.</>,
+          <>We advance you most of it upfront — typically 80%, so about <strong>$9,600</strong> in your account. (In some cases we can advance up to 90%.)</>,
           "Your crew gets paid, the supplier gets paid, and you bid the next job.",
           "When the county pays the invoice, we send you the remaining balance, minus our fee.",
         ]}
@@ -95,6 +96,19 @@ const InvoiceFunding = () => (
       Government agencies are about as reliable as customers get. The question is
       usually <em>when</em> they&rsquo;ll pay, not <em>whether</em>. (How it shows up in
       your books is a good question for your accountant.)
+    </P>
+
+    <H2>What if the agency doesn&rsquo;t pay?</H2>
+    <P>
+      We&rsquo;d rather you hear this from us upfront than find it in the fine print: our
+      funding is <strong>full recourse</strong>. That means if an agency doesn&rsquo;t pay
+      a funded invoice within the time set out in your agreement, you&rsquo;re responsible
+      for paying back the advance on that invoice. Your agreement spells out exactly how
+      that works, and we&rsquo;ll walk you through it before you sign.
+    </P>
+    <P>
+      In practice, with government customers it rarely comes to that. Agencies almost
+      always pay — the problem is how long they take.
     </P>
 
     <H2>Who it&rsquo;s a good fit for</H2>

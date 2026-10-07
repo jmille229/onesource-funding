@@ -128,6 +128,7 @@ export const ARTICLES: Article[] = [
               "Is there a minimum invoice size, or a minimum amount I have to fund each month?",
               "Do I have to fund all of my invoices, or can I choose which ones?",
               "Is there a long-term contract, or a fee to cancel?",
+              "If a customer never pays, who is responsible — you or the funder? (This is called recourse, and it's worth understanding before you sign.)",
               "How is the fee calculated — and are there any other charges, like application, wire or monthly fees?",
               "After the first invoice, how fast does the money actually arrive?",
             ]}
