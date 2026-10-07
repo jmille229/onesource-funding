@@ -8,6 +8,17 @@ const NotFound = () => {
     console.error("404 Error: User attempted to access non-existent route:", location.pathname);
   }, [location.pathname]);
 
+  // Every unknown URL is still served index.html with a 200, so tell search
+  // engines not to index it — otherwise a mistyped link can show up in results
+  // as a duplicate of the homepage.
+  useEffect(() => {
+    const robots = document.createElement("meta");
+    robots.name = "robots";
+    robots.content = "noindex";
+    document.head.appendChild(robots);
+    return () => robots.remove();
+  }, []);
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted">
       <div className="text-center">
