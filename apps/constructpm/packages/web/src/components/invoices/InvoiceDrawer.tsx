@@ -11,7 +11,7 @@ import { useAuthStore } from '../../stores/auth.store';
 import {
   type InvoiceAction, type InvoiceDocument, invoiceStatusBadge, invoiceStatusLabel, isAwaitingAgency,
   nextAction, uploadInvoiceDocument, downloadAttachment, canEditInvoices, canRecordPayments,
-  canSeeFunding, canVoid, FUNDING_BADGE, FUNDING_LABEL, daysSince,
+  canSeeFunding, canVoid, FUNDING_BADGE, FUNDING_LABEL, daysSince, isFundedOpen,
 } from '../../lib/invoices';
 import { InvoiceActionModal, type ActionInvoice } from './InvoiceActionModal';
 import { RequestFundingModal } from '../RequestFundingModal';
@@ -21,7 +21,8 @@ interface InvoiceDetail extends ActionInvoice {
   issue_date: string; due_date: string; paid_amount: string | number;
   submitted_on: string | null; approved_on: string | null; returned_on: string | null; return_note: string | null;
   notes: string | null;
-  payments: { id: string; amount: string; paid_on: string; reference: string | null }[];
+  payments: { id: string; amount: string; paid_on: string; reference: string | null;
+              source: string; paid_direct_on_funded: boolean }[];
 }
 
 /**
@@ -101,10 +102,13 @@ export function InvoiceDrawer({ invoiceId, fundingStatus, onClose }: {
     }
   };
 
-  const next = inv ? nextAction(inv.status) : null;
+  const next = inv ? nextAction(inv.status, inv.funded_status) : null;
+  const fundedOpen = inv ? isFundedOpen(inv.funded_status) && !['paid', 'void'].includes(inv.status) : false;
   const canAct = (a: InvoiceAction) => (a === 'payment' ? canRecordPayments(role) : canEditInvoices(role));
   const openFunding = fundingStatus && ['submitted', 'under_review', 'approved'].includes(fundingStatus);
-  const fundable = inv && inv.status === 'approved' && Number(inv.balance_due) > 0 && !openFunding;
+  const fundable = inv && inv.status === 'approved' && Number(inv.balance_due) > 0 && !openFunding
+    && !isFundedOpen(inv.funded_status);
+
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -163,6 +167,25 @@ export function InvoiceDrawer({ invoiceId, fundingStatus, onClose }: {
               </div>
             ) : null}
 
+            {/* Funded: the agency pays One Source, not the client. */}
+            {fundedOpen && (
+              <div className="rounded-lg border border-brand-200 bg-brand-50/50 p-4 text-sm text-slate-700">
+                <p className="font-medium text-slate-900 flex items-center gap-2">
+                  <Banknote className="w-4 h-4 text-brand-600" /> Funded by One Source
+                </p>
+                <p className="mt-1">
+                  The agency pays One Source for this invoice. It&rsquo;s marked paid here
+                  automatically when One Source receives the payment — nothing for you to record.
+                </p>
+                {canRecordPayments(role) && (
+                  <button className="mt-2 text-sm font-medium text-orange-700 hover:underline"
+                          onClick={() => setAction('payment')}>
+                    The agency paid me directly
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Timeline */}
             <section>
               <h3 className="text-sm font-semibold text-slate-700 mb-2">With the agency</h3>
@@ -201,8 +224,11 @@ export function InvoiceDrawer({ invoiceId, fundingStatus, onClose }: {
                   <li key={p.id} className="flex gap-2">
                     <CircleDollarSign className="w-4 h-4 text-green-700 mt-0.5 flex-shrink-0" />
                     <span>
-                      {formatCurrency(p.amount)} received {formatDate(p.paid_on)}
-                      {p.reference && <span className="text-slate-500"> · {p.reference}</span>}
+                      {formatCurrency(p.amount)} {p.source === 'one_source' ? 'collected by One Source' : 'received'} {formatDate(p.paid_on)}
+                      {p.reference && p.source !== 'one_source' && <span className="text-slate-500"> · {p.reference}</span>}
+                      {p.paid_direct_on_funded && (
+                        <span className="block text-xs text-orange-700">Paid to you directly — One Source notified</span>
+                      )}
                     </span>
                   </li>
                 ))}

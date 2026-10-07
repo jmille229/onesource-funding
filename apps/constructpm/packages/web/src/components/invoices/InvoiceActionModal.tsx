@@ -7,7 +7,7 @@ import {
   type DocType,
 } from '@constructpm/shared';
 import { api, apiError, formatCurrency, todayISO } from '../../lib/api';
-import { type InvoiceAction, uploadInvoiceDocument } from '../../lib/invoices';
+import { type InvoiceAction, uploadInvoiceDocument, isFundedOpen } from '../../lib/invoices';
 
 export interface ActionInvoice {
   id: string;
@@ -18,6 +18,8 @@ export interface ActionInvoice {
   customer_name?: string | null;
   submission_method?: string | null;
   agency_reference?: string | null;
+  /** Latest advance status, if One Source funded this invoice. */
+  funded_status?: string | null;
 }
 
 const TITLES: Record<InvoiceAction, string> = {
@@ -46,6 +48,8 @@ export function InvoiceActionModal({ invoice, action, onClose }: {
   const [amount, setAmount] = useState(String(Number(invoice.balance_due)));
   const [proofType, setProofType] = useState<string>('');
   const [proofFile, setProofFile] = useState<File | null>(null);
+  const funded = action === 'payment' && isFundedOpen(invoice.funded_status);
+  const [confirmDirect, setConfirmDirect] = useState(false);
 
   // For funding clients, what proof of approval this agency needs. Everyone
   // else gets null back and simply sees an optional upload.
@@ -84,10 +88,12 @@ export function InvoiceActionModal({ invoice, action, onClose }: {
       } else {
         const n = Number(amount);
         if (!(n > 0)) { toast.error('Enter the amount received'); setBusy(false); return; }
+        if (funded && !confirmDirect) { toast.error('Confirm the agency paid you directly'); setBusy(false); return; }
         await api.patch(`/invoices/${invoice.id}/record-payment`, {
           amount: n, paid_on: date, reference: reference.trim() || null,
+          ...(funded ? { confirm_direct_payment: true } : {}),
         });
-        toast.success('Payment recorded');
+        toast.success(funded ? 'Payment recorded — One Source has been notified' : 'Payment recorded');
       }
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['invoice', invoice.id] });
@@ -192,6 +198,25 @@ export function InvoiceActionModal({ invoice, action, onClose }: {
             </div>
           )}
 
+          {action === 'payment' && funded && (
+            <div className="rounded-md border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900 space-y-2">
+              <p className="font-medium">This invoice is funded by One Source</p>
+              <p>
+                The agency should pay One Source directly, and this invoice is marked paid
+                automatically when One Source receives the payment. You don&rsquo;t need to record it.
+              </p>
+              <p>
+                If the agency paid <strong>you</strong> instead, record it here. One Source will be
+                notified so the payment can be forwarded and the advance settled.
+              </p>
+              <label className="flex items-start gap-2">
+                <input type="checkbox" className="mt-0.5" checked={confirmDirect}
+                       onChange={(e) => setConfirmDirect(e.target.checked)} />
+                <span>Yes, the agency paid me directly</span>
+              </label>
+            </div>
+          )}
+
           {action === 'payment' && (
             <>
               <div>
@@ -210,7 +235,7 @@ export function InvoiceActionModal({ invoice, action, onClose }: {
 
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-primary" disabled={busy}>
+            <button type="submit" className="btn-primary" disabled={busy || (funded && !confirmDirect)}>
               {busy && <Loader2 className="w-4 h-4 animate-spin" />}
               Save
             </button>

@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { Banknote, AlertTriangle, PiggyBank, Clock, FolderKanban } from 'lucide-react';
-import { api, formatCurrency, formatDate } from '../../lib/api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Banknote, AlertTriangle, PiggyBank, Clock, FolderKanban, Send } from 'lucide-react';
+import { toast } from 'sonner';
+import { api, apiError, formatCurrency, formatDate } from '../../lib/api';
 import { factoredInvoiceRef } from '@constructpm/shared';
+import { FundingOnboardingForm } from '../../components/FundingOnboardingForm';
+import { FUNDING_BADGE, FUNDING_LABEL } from '../../lib/invoices';
 
 const STATUS_BADGE: Record<string, string> = {
   pending: 'badge-gray',
@@ -119,17 +122,28 @@ export function FactoringPage() {
     );
   }
 
-  // Not a factoring client — say so plainly rather than showing empty tiles.
-  if (!summary?.enabled) {
+  // Not set up for funding yet: explain it in a sentence and offer the way in,
+  // rather than a dead end.
+  if (!summary?.enabled || summary.status !== 'active') {
     return (
       <div className="page max-w-3xl mx-auto">
         <h1>Funding</h1>
-        <div className="card p-8 mt-6 text-center">
-          <Banknote className="w-10 h-10 mx-auto text-slate-300 mb-3" />
-          <p className="text-slate-600 font-medium">No factoring facility on this account</p>
-          <p className="text-sm text-slate-500 mt-1">
-            Once OneSource funds an invoice for you, your advances and reserve will appear here.
-          </p>
+        <p className="text-sm text-slate-500 mt-0.5">
+          Get paid on invoices the agency has approved, instead of waiting 30, 60 or 90+ days.
+        </p>
+        <div className="card p-5 sm:p-6 mt-6">
+          <div className="flex items-start gap-3 mb-5">
+            <div className="w-10 h-10 rounded-lg bg-brand-50 flex items-center justify-center flex-shrink-0">
+              <Banknote className="w-5 h-5 text-brand-600" />
+            </div>
+            <div className="text-sm text-slate-600 space-y-1">
+              <p className="font-medium text-slate-800">How it works</p>
+              <p>Once the agency approves an invoice, request funding from it here. One Source
+                 advances most of its value — typically 80% — and sends the rest, less a fee, when
+                 the agency pays. Tell us where to reach you and we&rsquo;ll take it from there.</p>
+            </div>
+          </div>
+          <FundingOnboardingForm showIntro={false} />
         </div>
       </div>
     );
@@ -143,7 +157,7 @@ export function FactoringPage() {
         <div>
           <h1>Funding</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Invoices factored with OneSource Funding
+            Invoices funded by One Source
           </p>
         </div>
       </div>
@@ -209,6 +223,9 @@ export function FactoringPage() {
         </div>
       )}
 
+      <FundingRequests />
+
+      <h2 className="text-base font-semibold text-slate-900 mb-3">Funded invoices</h2>
       <div className="filter-bar">
         <select
           className="input w-full sm:w-48"
@@ -292,5 +309,91 @@ export function FactoringPage() {
         invoice is outstanding. Final figures are confirmed when the customer pays.
       </p>
     </div>
+  );
+}
+
+interface FundingRequestRow {
+  id: string; invoice_id: string; invoice_number: string | null; customer_name: string | null;
+  requested_amount: string; status: string; requested_at: string; reviewed_at: string | null;
+  decline_reason: string | null;
+}
+
+/**
+ * Requests not yet turned into an advance: what's waiting on One Source, and
+ * what was declined and why. Funded ones move to the table below.
+ */
+function FundingRequests() {
+  const qc = useQueryClient();
+  const { data } = useQuery<FundingRequestRow[]>({
+    queryKey: ['factoring-requests'],
+    queryFn: () => api.get('/factoring/requests').then((r) => r.data.data),
+  });
+  // Open requests, plus declines from the last 60 days.
+  const cutoff = Date.now() - 60 * 86400_000;
+  const rows = (data ?? []).filter((r) =>
+    ['submitted', 'under_review'].includes(r.status)
+    || (r.status === 'declined' && Date.parse(r.reviewed_at ?? r.requested_at) >= cutoff));
+
+  const withdraw = async (id: string) => {
+    if (!window.confirm('Withdraw this funding request?')) return;
+    try {
+      await api.patch(`/factoring/requests/${id}/withdraw`);
+      toast.success('Request withdrawn');
+      qc.invalidateQueries({ queryKey: ['factoring-requests'] });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+    } catch (e) {
+      toast.error(apiError(e, 'Could not withdraw the request'));
+    }
+  };
+
+  return (
+    <section className="mb-8">
+      <h2 className="text-base font-semibold text-slate-900 mb-3">Funding requests</h2>
+      {rows.length === 0 ? (
+        <div className="card p-5 text-sm text-slate-500 flex items-center gap-3">
+          <Send className="w-5 h-5 text-slate-300 flex-shrink-0" />
+          <span>
+            Nothing waiting. To request funding, open an invoice the agency has approved on the{' '}
+            <Link to="/invoices" className="text-brand-600 hover:underline">Invoices</Link> page.
+          </span>
+        </div>
+      ) : (
+        <div className="card overflow-x-auto">
+          <table className="w-full min-w-[40rem]">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th className="table-header">Invoice</th>
+                <th className="table-header">Agency</th>
+                <th className="table-header text-right">Amount</th>
+                <th className="table-header">Requested</th>
+                <th className="table-header">Status</th>
+                <th className="table-header"><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r) => (
+                <tr key={r.id} className="hover:bg-slate-50 align-top">
+                  <td className="table-cell font-mono font-medium">{r.invoice_number ?? '—'}</td>
+                  <td className="table-cell">{r.customer_name ?? '—'}</td>
+                  <td className="table-cell text-right tabular-nums">{formatCurrency(r.requested_amount)}</td>
+                  <td className="table-cell text-slate-500">{formatDate(r.requested_at)}</td>
+                  <td className="table-cell-wrap">
+                    <span className={FUNDING_BADGE[r.status] ?? 'badge-gray'}>{FUNDING_LABEL[r.status] ?? r.status}</span>
+                    {r.status === 'declined' && r.decline_reason && (
+                      <p className="text-xs text-slate-600 mt-1 max-w-xs">{r.decline_reason}</p>
+                    )}
+                  </td>
+                  <td className="table-cell text-right">
+                    {r.status === 'submitted' && (
+                      <button className="btn-ghost btn-sm" onClick={() => void withdraw(r.id)}>Withdraw</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

@@ -493,7 +493,14 @@ function AdvancesTable({ onChanged }: { onChanged: () => void }) {
               <td className="table-cell text-right tabular-nums">{formatCurrency(r['advance_amount'])}</td>
               <td className="table-cell text-right tabular-nums">{formatCurrency(r['accrued_fee'])}</td>
               <td className="table-cell text-right tabular-nums">{r['days_outstanding'] ?? '—'}</td>
-              <td className="table-cell">{r['status']}</td>
+              <td className="table-cell">
+                {r['status']}
+                {String(r['direct_payment_reported']) === 'true' && ['pending', 'advanced'].includes(r['status'] ?? '') && (
+                  <span className="badge-orange ml-2" title="The client reports the agency paid them directly">
+                    client paid directly
+                  </span>
+                )}
+              </td>
               <td className="table-cell text-right">
                 {r['status'] === 'advanced' && (
                   <button className="btn-secondary btn-sm"

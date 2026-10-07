@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, Loader2, Upload, FileCheck2, X, ArrowRight, Circle } from 'lucide-react';
+import { Banknote, Loader2, Upload, FileCheck2, X, Circle } from 'lucide-react';
 import { toast } from 'sonner';
 import { DOC_TYPE_LABELS, isApprovalDocType, type DocType } from '@constructpm/shared';
 import { api, apiError, formatCurrency } from '../lib/api';
 import { uploadInvoiceDocument } from '../lib/invoices';
-import { useAuthStore } from '../stores/auth.store';
+import { FundingOnboardingForm } from './FundingOnboardingForm';
 
 interface Props {
   invoice: { id: string; invoice_number: string; total: string | number; customer_name?: string };
@@ -27,26 +27,15 @@ interface Props {
 export function RequestFundingModal({ invoice, onClose }: Props) {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
-  const user = useAuthStore((st) => st.user);
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [note, setNote] = useState('');
   const [proofType, setProofType] = useState('');
 
-  const [onboard, setOnboard] = useState({
-    contact_name: user ? `${user.first_name} ${user.last_name}`.trim() : '',
-    contact_email: user?.email ?? '',
-    contact_phone: '', monthly_volume: '', note: '',
-  });
 
   const { data: summary, isLoading } = useQuery({
     queryKey: ['factoring-summary'],
     queryFn: () => api.get('/factoring/summary').then((r) => r.data.data),
-  });
-  const { data: existingEnquiry } = useQuery({
-    queryKey: ['factoring-onboarding'],
-    queryFn: () => api.get('/factoring/onboarding').then((r) => r.data.data),
-    enabled: summary?.enabled === false,
   });
   const { data: requirement, refetch: refetchRequirement } = useQuery({
     queryKey: ['approval-requirement', invoice.id],
@@ -94,30 +83,6 @@ export function RequestFundingModal({ invoice, onClose }: Props) {
     }
   };
 
-  const requestOnboarding = async () => {
-    if (!onboard.contact_name || !onboard.contact_email) {
-      toast.error('Name and email are required');
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await api.post('/factoring/onboarding', {
-        ...onboard,
-        monthly_volume: onboard.monthly_volume ? Number(onboard.monthly_volume) : null,
-        contact_phone: onboard.contact_phone || null,
-        note: onboard.note || null,
-        invoice_id: invoice.id,
-      });
-      toast.success('Thanks — One Source will reach out shortly');
-      qc.invalidateQueries({ queryKey: ['factoring-onboarding'] });
-      onClose();
-    } catch (e) {
-      const msg = (e as { response?: { data?: { message?: string } } }).response?.data?.message;
-      toast.error(msg ?? 'Could not send the enquiry');
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 p-0 sm:p-4">
@@ -248,64 +213,9 @@ export function RequestFundingModal({ invoice, onClose }: Props) {
         )}
 
         {/* ── Not a client yet: onboarding enquiry ────────────────────────── */}
-        {!isLoading && !isClient && existingEnquiry && (
-          <div className="p-5 space-y-3 text-center">
-            <FileCheck2 className="w-10 h-10 mx-auto text-green-600" />
-            <p className="font-medium text-slate-800">Your enquiry is already with us</p>
-            <p className="text-sm text-slate-500">
-              One Source has your details and will be in touch. No need to send another.
-            </p>
-            <button className="btn-secondary w-full" onClick={onClose}>Close</button>
-          </div>
-        )}
-
-        {!isLoading && !isClient && !existingEnquiry && (
-          <div className="p-5 space-y-4">
-            <div className="rounded-md bg-slate-50 border border-slate-200 p-3">
-              <p className="text-sm text-slate-700 font-medium">Not set up for funding yet</p>
-              <p className="text-sm text-slate-500 mt-0.5">
-                One Source advances most of an approved invoice&rsquo;s value now, instead of you
-                waiting on the agency. Tell us where to reach you and we&rsquo;ll take it from there.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="label" htmlFor="ob_name">Your name *</label>
-                <input id="ob_name" className="input" value={onboard.contact_name}
-                       onChange={(e) => setOnboard((o) => ({ ...o, contact_name: e.target.value }))} />
-              </div>
-              <div>
-                <label className="label" htmlFor="ob_phone">Phone</label>
-                <input id="ob_phone" className="input" value={onboard.contact_phone}
-                       onChange={(e) => setOnboard((o) => ({ ...o, contact_phone: e.target.value }))} />
-              </div>
-            </div>
-            <div>
-              <label className="label" htmlFor="ob_email">Email *</label>
-              <input id="ob_email" type="email" className="input" value={onboard.contact_email}
-                     onChange={(e) => setOnboard((o) => ({ ...o, contact_email: e.target.value }))} />
-            </div>
-            <div>
-              <label className="label" htmlFor="ob_vol">Rough monthly invoicing</label>
-              <input id="ob_vol" type="number" min="0" step="1000" className="input"
-                     value={onboard.monthly_volume}
-                     onChange={(e) => setOnboard((o) => ({ ...o, monthly_volume: e.target.value }))} />
-            </div>
-            <div>
-              <label className="label" htmlFor="ob_note">Anything else? (optional)</label>
-              <textarea id="ob_note" className="input" rows={2} value={onboard.note}
-                        onChange={(e) => setOnboard((o) => ({ ...o, note: e.target.value }))} />
-            </div>
-
-            <button className="btn-primary w-full" disabled={submitting}
-                    onClick={() => void requestOnboarding()}>
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              Request onboarding <ArrowRight className="w-4 h-4" />
-            </button>
-            <p className="text-xs text-slate-500 text-center">
-              No commitment — this just starts a conversation.
-            </p>
+        {!isLoading && !isClient && (
+          <div className="p-5">
+            <FundingOnboardingForm invoiceId={invoice.id} onDone={onClose} />
           </div>
         )}
       </div>
