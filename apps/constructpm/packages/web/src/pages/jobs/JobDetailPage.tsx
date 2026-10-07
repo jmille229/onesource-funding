@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -5,6 +6,9 @@ import {
   BarChart3, FileText, Clock, Building2, ExternalLink, HardHat
 } from 'lucide-react';
 import { api, formatCurrency, formatDate, formatPct } from '../../lib/api';
+import { invoiceStatusBadge, invoiceStatusLabel, canEditInvoices } from '../../lib/invoices';
+import { LogInvoiceModal } from '../../components/invoices/LogInvoiceModal';
+import { useAuthStore } from '../../stores/auth.store';
 
 const STATUS_COLORS: Record<string, string> = {
   active: 'badge-green', bidding: 'badge-blue', lead: 'badge-gray',
@@ -20,6 +24,8 @@ const CONTRACT_LABELS: Record<string, string> = {
 export function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const role = useAuthStore((s) => s.user?.role);
+  const [logging, setLogging] = useState(false);
 
   const { data: jobData, isLoading } = useQuery({
     queryKey: ['job', id],
@@ -218,7 +224,12 @@ export function JobDetailPage() {
         <div className="card">
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
             <h3 className="font-semibold text-slate-900 text-sm">Invoices</h3>
-            <Link to="/invoices" className="text-xs text-brand-600 hover:underline">View all</Link>
+            <div className="flex items-center gap-3">
+              {canEditInvoices(role) && (
+                <button onClick={() => setLogging(true)} className="text-xs text-brand-600 hover:underline">Log invoice</button>
+              )}
+              <Link to="/invoices" className="text-xs text-brand-600 hover:underline">View all</Link>
+            </div>
           </div>
           {invoices.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-slate-400">No invoices yet</div>
@@ -232,11 +243,9 @@ export function JobDetailPage() {
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-semibold">{formatCurrency(inv['total'] as number)}</p>
-                    <span className={
-                      inv['status'] === 'paid' ? 'badge-green' :
-                      inv['status'] === 'overdue' ? 'badge-red' :
-                      inv['status'] === 'sent' ? 'badge-blue' : 'badge-gray'
-                    }>{inv['status'] as string}</span>
+                    <span className={invoiceStatusBadge(inv['status'] as string)}>
+                      {invoiceStatusLabel(inv['status'] as string)}
+                    </span>
                   </div>
                 </li>
               ))}
@@ -273,6 +282,8 @@ export function JobDetailPage() {
           </div>
         )}
       </div>
+
+      {logging && id && <LogInvoiceModal defaultJobId={id} onClose={() => setLogging(false)} />}
     </div>
   );
 }

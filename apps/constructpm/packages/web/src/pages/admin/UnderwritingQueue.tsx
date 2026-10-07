@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { adminApi } from '../../lib/admin-api';
 import { formatCurrency, formatDate } from '../../lib/api';
 import { factoredInvoiceRef } from '@constructpm/shared';
+import { RequestDocuments } from './RequestDocuments';
 
 /**
  * The operator's decision screen.
@@ -32,6 +33,7 @@ interface RequestRow {
   source: string;
   requested_at: string;
   document_count: string;
+  has_approval_doc?: boolean;
   uw_score: number | null;
   uw_action: Action | null;
   uw_auto_applied: boolean | null;
@@ -464,8 +466,10 @@ export function UnderwritingQueue() {
                       <p className="text-xs text-slate-500 truncate">
                         <span className="font-mono">{factoredInvoiceRef(r)}</span> · {r.customer_name ?? 'agency not named'} ·{' '}
                         {formatDate(r.requested_at)}
-                        {Number(r.document_count) === 0 && (
+                        {Number(r.document_count) === 0 ? (
                           <span className="text-amber-700"> · no document</span>
+                        ) : r.source !== 'operator' && !r.has_approval_doc && (
+                          <span className="text-amber-700"> · no approval proof</span>
                         )}
                       </p>
                     </div>
@@ -492,6 +496,7 @@ export function UnderwritingQueue() {
                     </span>
                   )}
                 </div>
+                {open && <RequestDocuments requestId={r.id} />}
                 {open && <DecisionPanel requestId={r.id} onChanged={refresh} />}
               </div>
             );

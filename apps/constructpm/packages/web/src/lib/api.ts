@@ -94,7 +94,25 @@ export function formatCurrency(
 
 export function formatDate(d: string | null | undefined): string {
   if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  // Calendar dates (due, submitted, approved…) arrive as "2026-10-15" or as UTC
+  // midnight "2026-10-15T00:00:00.000Z". Formatting those in the viewer's zone
+  // showed every one a day early anywhere in the Americas, so read them in UTC.
+  const calendarDate = /^\d{4}-\d{2}-\d{2}(T00:00:00(\.000)?Z)?$/.test(d);
+  return new Date(d.length === 10 ? `${d}T00:00:00Z` : d).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    ...(calendarDate ? { timeZone: 'UTC' } : {}),
+  });
+}
+
+/** Today as YYYY-MM-DD in the viewer's own calendar, for date inputs. */
+export function todayISO(): string {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
+/** The API's message for a failed request, or a fallback. */
+export function apiError(e: unknown, fallback: string): string {
+  return (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? fallback;
 }
 
 export function formatPct(n: number | string | null | undefined): string {

@@ -8,6 +8,8 @@ import { isPlaceholderInvoiceNumber } from '../factoring/underwriting.js';
 import { scoreRequest } from '../factoring/underwriting.service.js';
 import { parseDelimited, toAdvancePayload } from './import-map.js';
 import { parsePagination } from '../../lib/pagination.js';
+import { deliverAttachment } from '../../lib/storage.js';
+import { APPROVAL_DOC_TYPES } from '@constructpm/shared';
 import {
   asyncHandler, validate, authenticatePlatform, authRateLimit,
 } from '../../middleware/index.js';
@@ -191,6 +193,7 @@ adminRouter.get('/debtors', asyncHandler(async (_req, res) => {
     SELECT d.id, d.legal_name, d.credit_limit, d.risk_grade,
            d.portal_visibility, d.invoice_confirmation, d.ach_change,
            d.staff_communication, d.verification_notes,
+           d.approval_evidence, d.approval_instructions,
            COALESCE(SUM(fi.advance_amount) FILTER (WHERE fi.status='advanced'),0) AS exposure,
            COUNT(DISTINCT fi.company_id) FILTER (WHERE fi.status='advanced')      AS client_count,
            COUNT(fi.id) FILTER (WHERE fi.status='advanced')                       AS invoice_count,
@@ -249,6 +252,41 @@ adminRouter.post(
       return r.rows[0];
     });
     res.status(201).json({ data: row });
+  })
+);
+
+/**
+ * What proof of approval One Source accepts for this agency, and what the
+ * client is told to upload. The client app reads this (and nothing else about
+ * the debtor) when an invoice to this agency is marked approved or funded.
+ */
+adminRouter.patch(
+  '/debtors/:id/approval-requirement',
+  validate(z.object({
+    approval_evidence: z.array(z.enum(APPROVAL_DOC_TYPES)).min(1),
+    approval_instructions: z.string().trim().max(1000).nullable().optional(),
+  })),
+  asyncHandler(async (req, res) => {
+    const b = req.body as { approval_evidence: string[]; approval_instructions?: string | null };
+    const row = await withAdminTransaction(async (c) => {
+      const before = await c.query(
+        `SELECT approval_evidence, approval_instructions FROM factoring_debtors WHERE id = $1`,
+        [req.params['id']]);
+      if (!before.rows[0]) throw Object.assign(new Error('Debtor not found'), { status: 404 });
+      const r = await c.query(
+        `UPDATE factoring_debtors
+            SET approval_evidence = $2, approval_instructions = $3, updated_at = NOW()
+          WHERE id = $1
+          RETURNING id, legal_name, approval_evidence, approval_instructions`,
+        [req.params['id'], [...new Set(b.approval_evidence)], b.approval_instructions || null]);
+      await audit(c, {
+        platformUserId: req.platform.userId, action: 'update_approval_requirement',
+        entityType: 'factoring_debtor', entityId: String(req.params['id']),
+        before: before.rows[0], after: r.rows[0], ip: req.ip ?? null,
+      });
+      return r.rows[0];
+    });
+    res.json({ data: row });
   })
 );
 
@@ -633,6 +671,10 @@ adminRouter.get('/requests', asyncHandler(async (_req, res) => {
     SELECT fr.*, c.name AS company_name,
            (SELECT COUNT(*) FROM file_attachments fa
              WHERE fa.entity_type = 'funding_request' AND fa.entity_id = fr.id) AS document_count,
+           EXISTS (SELECT 1 FROM file_attachments fa
+             WHERE fa.entity_type = 'funding_request' AND fa.entity_id = fr.id
+               AND fa.doc_type IN ('approved_invoice','approval_email','portal_screenshot','certified_pay_app'))
+             AS has_approval_doc,
            d.score        AS uw_score,
            d.action       AS uw_action,
            d.auto_applied AS uw_auto_applied,
@@ -651,6 +693,36 @@ adminRouter.get('/requests', asyncHandler(async (_req, res) => {
      ORDER BY CASE WHEN fr.status IN ('submitted','under_review') THEN 0 ELSE 1 END,
               fr.requested_at DESC`);
   res.json({ data: r.rows });
+}));
+
+/**
+ * Documents submitted with a request: the client's invoice copies and proof of
+ * agency approval, labelled by type. The operator role can read only
+ * funding-request attachments (row policy in V005), never the rest of a
+ * client's document store.
+ */
+adminRouter.get('/requests/:id/documents', asyncHandler(async (req, res) => {
+  const r = await pool().query(
+    `SELECT id, original_name, doc_type, content_type, size_bytes, created_at
+       FROM file_attachments
+      WHERE entity_type = 'funding_request' AND entity_id = $1
+      ORDER BY created_at`, [req.params['id']]);
+  res.json({ data: r.rows });
+}));
+
+adminRouter.get('/requests/:id/documents/:fileId/download', asyncHandler(async (req, res) => {
+  const r = await pool().query(
+    `SELECT id, original_name, storage_key, content_type
+       FROM file_attachments
+      WHERE id = $1 AND entity_type = 'funding_request' AND entity_id = $2`,
+    [req.params['fileId'], req.params['id']]);
+  if (!r.rows[0]) { res.status(404).json({ error: 'not_found', message: 'Document not found' }); return; }
+  await withAdminTransaction((c) => audit(c, {
+    platformUserId: req.platform.userId, action: 'download_document',
+    entityType: 'funding_request', entityId: String(req.params['id']),
+    after: { file_id: r.rows[0]!['id'], name: r.rows[0]!['original_name'] }, ip: req.ip ?? null,
+  }));
+  await deliverAttachment(res, r.rows[0]!);
 }));
 
 // ─── Underwriting ─────────────────────────────────────────────────────────────
