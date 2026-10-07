@@ -4,6 +4,7 @@ import { DollarSign, FolderKanban, Clock, TrendingUp, ArrowRight, AlertCircle } 
 import { api, formatCurrency, formatDate } from '../lib/api';
 import { useAuthStore } from '../stores/auth.store';
 import type { Job, Invoice } from '@constructpm/shared';
+import { invoiceStatusBadge, invoiceStatusLabel } from '../lib/invoices';
 
 function StatCard({ label, value, sub, icon: Icon, color }: { label: string; value: string; sub?: string; icon: React.ElementType; color: string }) {
   return (
@@ -27,14 +28,14 @@ const statusColor: Record<string, string> = {
   awarded: 'badge-yellow', on_hold: 'badge-orange', closed: 'badge-gray',
   substantially_complete: 'badge-green', cancelled: 'badge-red',
 };
-const invoiceColor: Record<string, string> = {
-  paid: 'badge-green', sent: 'badge-blue', draft: 'badge-gray',
-  overdue: 'badge-red', partially_paid: 'badge-yellow', void: 'badge-gray',
-};
 
 export function DashboardPage() {
   const user = useAuthStore(s => s.user);
 
+  const { data: company } = useQuery({
+    queryKey: ['company'],
+    queryFn: () => api.get('/settings/company').then(r => r.data.data as { name: string }).catch(() => null),
+  });
   const { data: dash } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api.get('/reports/dashboard').then(r => r.data.data),
@@ -55,20 +56,27 @@ export function DashboardPage() {
 
   const activeJobs = jobStats.find((j: Record<string,unknown>) => j['status'] === 'active')?.count ?? 0;
   const totalValue = jobStats.reduce((s: number, j: Record<string,unknown>) => s + Number(j['total_value'] ?? 0), 0);
-  const openAR = invStats.reduce((s: number, i: Record<string,unknown>) => s + Number(i['balance_due'] ?? 0), 0);
+  // Receivables are invoices the agency has been billed for: not drafts, not void.
+  const openAR = invStats
+    .filter((i: Record<string,unknown>) => !['draft', 'void', 'paid'].includes(String(i['status'])))
+    .reduce((s: number, i: Record<string,unknown>) => s + Number(i['balance_due'] ?? 0), 0);
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
   return (
     <div className="page max-w-7xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Good morning, {user?.first_name} 👋</h1>
-        <p className="text-slate-500 mt-0.5">Here's what's happening at Hartwell Construction today</p>
+        <h1 className="text-xl sm:text-2xl font-bold text-slate-900">{greeting}, {user?.first_name}</h1>
+        <p className="text-slate-500 mt-0.5">
+          Here&rsquo;s what&rsquo;s happening{company?.name ? ` at ${company.name}` : ''} today
+        </p>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatCard label="Active Jobs" value={String(activeJobs)} sub={`${jobStats.length} total projects`} icon={FolderKanban} color="bg-blue-50 text-blue-600" />
         <StatCard label="Portfolio Value" value={formatCurrency(totalValue, { short: true })} sub="Total contract value" icon={TrendingUp} color="bg-green-50 text-green-600" />
-        <StatCard label="Open Receivables" value={formatCurrency(openAR, { short: true })} sub="Outstanding invoices" icon={DollarSign} color="bg-orange-50 text-orange-600" />
+        <StatCard label="Open Receivables" value={formatCurrency(openAR, { short: true })} sub="Submitted, not yet paid" icon={DollarSign} color="bg-orange-50 text-orange-600" />
         <StatCard label="Hours (30d)" value={String(dash?.time_last_30d?.hours ?? 0)} sub={`${dash?.time_last_30d?.ot_hours ?? 0} OT hours`} icon={Clock} color="bg-purple-50 text-purple-600" />
       </div>
 
@@ -127,7 +135,7 @@ export function DashboardPage() {
                 </div>
                 <div className="text-right ml-4 flex-shrink-0">
                   <p className="text-sm font-medium">{formatCurrency(inv.total)}</p>
-                  <span className={invoiceColor[inv.status] ?? 'badge-gray'}>{inv.status.replace('_', ' ')}</span>
+                  <span className={invoiceStatusBadge(inv.status)}>{invoiceStatusLabel(inv.status)}</span>
                 </div>
               </div>
             ))}

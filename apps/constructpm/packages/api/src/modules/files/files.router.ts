@@ -1,45 +1,25 @@
 import { Router } from 'express';
-import path from 'path';
 import { PassThrough } from 'stream';
 import busboy from 'busboy';
 import { fileTypeFromBuffer } from 'file-type';
 import { Upload } from '@aws-sdk/lib-storage';
 import {
-  S3Client,
-  GetObjectCommand,
   DeleteObjectCommand,
   HeadBucketCommand,
   CreateBucketCommand,
 } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'crypto';
 import { validate as isUuid } from 'uuid';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
 import { asyncHandler, requireRole, logger } from '../../middleware/index.js';
 import { env } from '../../lib/env.js';
+import { s3, sanitizeFilename, deliverAttachment } from '../../lib/storage.js';
+import { DOC_TYPES } from '@constructpm/shared';
 
 export const filesRouter = Router();
 
-// ─── S3/MinIO clients ─────────────────────────────────────────────────────────
-// `s3` talks to the store over the internal/server-side address.
-const s3 = new S3Client({
-  endpoint: env.S3_ENDPOINT !== 'https://s3.amazonaws.com' ? env.S3_ENDPOINT : undefined,
-  region: env.S3_REGION,
-  credentials: { accessKeyId: env.S3_ACCESS_KEY, secretAccessKey: env.S3_SECRET_KEY },
-  forcePathStyle: env.S3_FORCE_PATH_STYLE,
-});
-
-// `presignS3` signs URLs that a *browser* will open, so it must sign against the
-// externally reachable hostname. Only used when S3_PUBLIC_ENDPOINT is configured;
-// otherwise downloads stream through the API (see GET /:id/download).
-const presignS3 = env.S3_PUBLIC_ENDPOINT
-  ? new S3Client({
-      endpoint: env.S3_PUBLIC_ENDPOINT,
-      region: env.S3_REGION,
-      credentials: { accessKeyId: env.S3_ACCESS_KEY, secretAccessKey: env.S3_SECRET_KEY },
-      forcePathStyle: env.S3_FORCE_PATH_STYLE,
-    })
-  : s3;
+// S3/MinIO clients and download delivery live in lib/storage.ts, shared with
+// the operator console.
 
 async function ensureBucket(name: string) {
   try {
@@ -59,18 +39,6 @@ if (env.NODE_ENV !== 'production') {
 // limit is about connection/CPU pressure, not per-upload memory.
 const MAX_CONCURRENT_UPLOADS = 10;
 let activeUploads = 0;
-
-// ─── Filename sanitization ────────────────────────────────────────────────────
-function sanitizeFilename(original: string): string {
-  const truncated = original.slice(0, 255);                    // Hard cap BEFORE regex
-  const base = path.basename(truncated);
-  const safe = base
-    .replace(/\0/g, '')
-    .replace(/[^a-zA-Z0-9._\-\s]/g, '_')
-    .replace(/\s+/g, '_')
-    .trim();
-  return safe || 'upload';
-}
 
 // ─── MIME allowlist — NO SVG ──────────────────────────────────────────────────
 // SECURITY: SVG is intentionally excluded. SVG files can embed arbitrary
@@ -269,6 +237,25 @@ filesRouter.post(
 
             // Validate form fields
             const { entity_type, entity_id } = assertEntityRef(fields['entity_type'], fields['entity_id']);
+            // A funding request's documents are fixed when it is submitted (copied
+            // from the invoice). Adding to one afterwards would let proof appear
+            // after underwriting started, so tenants can't upload to it directly.
+            if (entity_type === 'funding_request') {
+              throw Object.assign(
+                new Error('Attach documents to the invoice; they are included when you request funding'),
+                { status: 422 });
+            }
+            // What the document is (invoice as submitted, agency approval, …).
+            const rawDocType = fields['doc_type'];
+            if (rawDocType !== undefined && !(DOC_TYPES as readonly string[]).includes(rawDocType)) {
+              throw Object.assign(new Error('doc_type is not a recognised document type'), { status: 422 });
+            }
+            const doc_type = rawDocType ?? null;
+            if (entity_type === 'invoice') {
+              const inv = await createRlsClient(readPool, req.auth.companyId).query(
+                'SELECT 1 FROM invoices WHERE id = $1 AND deleted_at IS NULL', [entity_id]);
+              if (!inv.rows[0]) throw Object.assign(new Error('Invoice not found'), { status: 404 });
+            }
             const job_id = fields['job_id'];
             if (job_id !== undefined && !isUuid(job_id)) {
               throw Object.assign(new Error('job_id must be a UUID'), { status: 422 });
@@ -319,8 +306,8 @@ filesRouter.post(
             const result = await dbWrite.query(
               `INSERT INTO file_attachments
                  (company_id, job_id, entity_type, entity_id, original_name,
-                  storage_key, content_type, size_bytes, scan_status, uploaded_by)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+                  storage_key, content_type, size_bytes, scan_status, uploaded_by, doc_type)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
               [
                 req.auth.companyId,
                 job_id ?? null,
@@ -332,6 +319,7 @@ filesRouter.post(
                 totalBytes,
                 env.SKIP_VIRUS_SCAN ? 'clean' : 'pending',
                 req.auth.userId,
+                doc_type,
               ]
             );
 
@@ -413,56 +401,7 @@ filesRouter.get(
       return;
     }
 
-    const safeName = sanitizeFilename(String(attachment['original_name']));
-    const disposition = `attachment; filename*=UTF-8''${encodeURIComponent(safeName)}`;
-
-    // Two delivery modes:
-    //
-    // S3_PUBLIC_ENDPOINT set → hand back a presigned URL so the object store serves
-    //   the bytes directly and the API stays out of the data path. The endpoint must
-    //   be one the *browser* can resolve; presigning against an internal address
-    //   (e.g. http://minio:9000 on a Docker network) produces a URL that resolves
-    //   for the API container and for nobody else.
-    //
-    // Otherwise → stream the object through the API. Slower and it costs API
-    // bandwidth, but it works on any topology and keeps the bucket entirely
-    // private. This is the default for the single-VPS deployment.
-    if (env.S3_PUBLIC_ENDPOINT) {
-      const url = await getSignedUrl(
-        presignS3,
-        new GetObjectCommand({
-          Bucket: env.S3_BUCKET_FILES,
-          Key: attachment['storage_key'] as string,
-          ResponseContentDisposition: disposition,
-        }),
-        { expiresIn: 900 }   // Short-lived — limits exposure of a leaked URL
-      );
-      res.json({ data: { url, expires_in: 900 } });
-      return;
-    }
-
-    const object = await s3.send(new GetObjectCommand({
-      Bucket: env.S3_BUCKET_FILES,
-      Key: attachment['storage_key'] as string,
-    }));
-
-    if (!object.Body) {
-      res.status(404).json({ error: 'not_found', message: 'File contents missing' });
-      return;
-    }
-
-    // SECURITY: serve the MIME type we recorded at upload (magic-byte verified),
-    // never a client-supplied one, and force download rather than inline render.
-    // The column is content_type; this read `mime_type`, which does not exist,
-    // so every download went out as application/octet-stream regardless.
-    res.setHeader('Content-Type', String(attachment['content_type'] ?? 'application/octet-stream'));
-    res.setHeader('Content-Disposition', disposition);
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    if (object.ContentLength) res.setHeader('Content-Length', String(object.ContentLength));
-
-    const body = object.Body as NodeJS.ReadableStream;
-    body.on('error', () => { if (!res.headersSent) res.status(502).end(); else res.destroy(); });
-    body.pipe(res);
+    await deliverAttachment(res, attachment);
   })
 );
 
@@ -472,13 +411,26 @@ filesRouter.delete(
   requireRole('owner', 'admin', 'project_manager'),
   asyncHandler(async (req, res) => {
     const db = createRlsClient(writePool, req.auth.companyId);
+    // Documents submitted with a funding request are part of its record.
     const result = await db.query(
-      'DELETE FROM file_attachments WHERE id = $1 AND company_id = $2 RETURNING *',
+      `DELETE FROM file_attachments
+        WHERE id = $1 AND company_id = $2 AND entity_type <> 'funding_request' RETURNING *`,
       [req.params['id'], req.auth.companyId]
     );
 
     if (!result.rows[0]) {
       res.status(404).json({ error: 'not_found', message: 'File not found' });
+      return;
+    }
+
+    // A funding request holds its own row pointing at the same stored object
+    // (copied from the invoice). Only remove the object when nothing else uses it.
+    const shared = await db.query(
+      'SELECT 1 FROM file_attachments WHERE storage_key = $1 LIMIT 1',
+      [result.rows[0]!['storage_key']]
+    );
+    if (shared.rows[0]) {
+      res.status(204).send();
       return;
     }
 

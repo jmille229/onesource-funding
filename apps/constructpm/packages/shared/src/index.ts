@@ -18,7 +18,11 @@ export type ContactType = 'customer' | 'vendor' | 'subcontractor' | 'both';
 export type ChangeOrderStatus = 'draft' | 'sent' | 'approved' | 'rejected' | 'void';
 export type PurchaseOrderStatus = 'draft' | 'sent' | 'acknowledged' | 'partially_billed' | 'fully_billed' | 'closed';
 export type BillStatus = 'draft' | 'pending_approval' | 'approved' | 'paid' | 'disputed';
-export type InvoiceStatus = 'draft' | 'sent' | 'viewed' | 'partially_paid' | 'paid' | 'overdue' | 'void';
+// 'sent' means "submitted to the agency" — the contractor submits through the
+// agency's own channel; the app only records that it happened.
+export type InvoiceStatus =
+  | 'draft' | 'sent' | 'viewed' | 'approved' | 'returned'
+  | 'partially_paid' | 'paid' | 'overdue' | 'void';
 
 // ─── Base ─────────────────────────────────────────────────────────────────────
 
@@ -280,7 +284,63 @@ export interface Invoice extends Base {
   paid_amount: number;
   balance_due: number;
   notes?: string | null;
+  submitted_on?: string | null;
+  submission_method?: SubmissionMethod | null;
+  agency_reference?: string | null;
+  approved_on?: string | null;
+  returned_on?: string | null;
+  return_note?: string | null;
   items?: InvoiceLineItem[];
+}
+
+// ─── Invoice tracking ─────────────────────────────────────────────────────────
+// ConstructPM tracks invoices; it does not send them. The contractor bills the
+// agency however they already do, and records each step here.
+
+export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
+  draft: 'Not submitted',
+  sent: 'Submitted to agency',
+  viewed: 'Submitted to agency',
+  overdue: 'Submitted to agency',
+  approved: 'Approved by agency',
+  returned: 'Returned for correction',
+  partially_paid: 'Partially paid',
+  paid: 'Paid',
+  void: 'Void',
+};
+
+/** Statuses where the invoice is with the agency awaiting a decision. */
+export const AWAITING_AGENCY: readonly InvoiceStatus[] = ['sent', 'viewed', 'overdue'];
+
+export const SUBMISSION_METHODS = ['portal', 'email', 'mail', 'in_person', 'other'] as const;
+export type SubmissionMethod = typeof SUBMISSION_METHODS[number];
+export const SUBMISSION_METHOD_LABELS: Record<SubmissionMethod, string> = {
+  portal: 'Agency portal', email: 'Email', mail: 'Mail', in_person: 'In person', other: 'Other',
+};
+
+/** Kinds of proof that an agency has approved an invoice for payment. */
+export const APPROVAL_DOC_TYPES = [
+  'approved_invoice', 'approval_email', 'portal_screenshot', 'certified_pay_app',
+] as const;
+export type ApprovalDocType = typeof APPROVAL_DOC_TYPES[number];
+
+export const DOC_TYPES = [
+  'invoice_as_submitted', ...APPROVAL_DOC_TYPES, 'contract_po', 'other',
+] as const;
+export type DocType = typeof DOC_TYPES[number];
+
+export const DOC_TYPE_LABELS: Record<DocType, string> = {
+  invoice_as_submitted: 'Invoice as submitted',
+  approved_invoice: 'Approved invoice',
+  approval_email: 'Approval email or letter from the agency',
+  portal_screenshot: 'Agency portal screenshot showing approval',
+  certified_pay_app: 'Certified payment application',
+  contract_po: 'Contract or purchase order',
+  other: 'Other',
+};
+
+export function isApprovalDocType(t: string | null | undefined): t is ApprovalDocType {
+  return (APPROVAL_DOC_TYPES as readonly string[]).includes(t ?? '');
 }
 
 // ─── Daily Logs ───────────────────────────────────────────────────────────────

@@ -6,6 +6,8 @@ import { notify, OPS_INBOX } from '../../lib/mailer.js';
 import { asyncHandler, requireRole, validate } from '../../middleware/index.js';
 import { exposureLimit, type UnderwritingPolicy } from './underwriting.js';
 import { scoreRequestInBackground } from './underwriting.service.js';
+import { APPROVAL_DOC_TYPES, DOC_TYPE_LABELS, type DocType } from '@constructpm/shared';
+import type pg from 'pg';
 
 export const factoringRouter = Router();
 
@@ -51,6 +53,58 @@ const INVOICE_SELECT = `
     FROM factored_invoices fi
     LEFT JOIN jobs j ON j.id = fi.job_id
 `;
+
+/**
+ * What proof of approval this invoice's agency requires, and whether it is on
+ * file. The rule is set per agency by One Source (factoring_debtors) and read
+ * through a SECURITY DEFINER function, since tenants cannot see that table.
+ */
+interface Queryable {
+  query<T extends pg.QueryResultRow>(sql: string, params?: unknown[]): Promise<pg.QueryResult<T>>;
+}
+
+async function approvalRequirement(c: Queryable, invoiceId: string) {
+  const inv = await c.query<{ customer_name: string | null }>(
+    `SELECT ct.name AS customer_name FROM invoices i
+       LEFT JOIN contacts ct ON ct.id = i.customer_id
+      WHERE i.id = $1 AND i.deleted_at IS NULL`, [invoiceId]);
+  if (!inv.rows[0]) throw Object.assign(new Error('Invoice not found'), { status: 404 });
+  const agency = inv.rows[0].customer_name ?? '';
+  const rule = await c.query<{ accepted: string[]; instructions: string | null }>(
+    `SELECT accepted, instructions FROM agency_approval_requirement($1)`, [agency]);
+  const accepted = rule.rows[0]?.accepted ?? ['approved_invoice'];
+  const docs = await c.query<{ id: string; original_name: string; doc_type: string | null; created_at: string }>(
+    `SELECT id, original_name, doc_type, created_at FROM file_attachments
+      WHERE entity_type = 'invoice' AND entity_id = $1 ORDER BY created_at`, [invoiceId]);
+  const approvalDocs = docs.rows.filter((d) => (APPROVAL_DOC_TYPES as readonly string[]).includes(d.doc_type ?? ''));
+  return {
+    agency_name: agency,
+    accepted,
+    instructions: rule.rows[0]?.instructions ?? null,
+    documents: docs.rows,
+    satisfied: approvalDocs.some((d) => accepted.includes(d.doc_type!)),
+  };
+}
+
+/**
+ * GET /api/factoring/approval-requirement?invoice_id=
+ *
+ * For factoring clients: the agency's accepted proof of approval and what's on
+ * file. For everyone else there is no funding requirement, so accepted is null.
+ */
+factoringRouter.get('/approval-requirement',
+  requireRole('owner', 'admin', 'project_manager', 'accountant'),
+  asyncHandler(async (req, res) => {
+    const invoiceId = String(req.query['invoice_id'] ?? '');
+    if (!/^[0-9a-f-]{36}$/i.test(invoiceId)) {
+      res.status(422).json({ error: 'validation_error', message: 'invoice_id must be a UUID' });
+      return;
+    }
+    const db = createRlsClient(readPool, req.auth.companyId);
+    const client = await db.query(`SELECT 1 FROM factoring_clients WHERE status = 'active'`);
+    const r = await approvalRequirement(db, invoiceId);
+    res.json({ data: client.rows[0] ? r : { ...r, accepted: null, instructions: null, satisfied: true } });
+  }));
 
 /** GET /api/factoring/summary — is factoring enabled, and the headline numbers. */
 factoringRouter.get('/summary', requireRole(...FINANCE_ROLES), asyncHandler(async (req, res) => {
@@ -210,10 +264,17 @@ factoringRouter.post(
 
       // RLS scopes this to the caller's company, so an invoice id belonging to
       // another tenant simply isn't found.
-      const inv = await c.query<{ id: string; invoice_number: string; total: string; customer_id: string }>(
-        `SELECT id, invoice_number, total, customer_id FROM invoices
+      const inv = await c.query<{ id: string; invoice_number: string; total: string; balance_due: string;
+                                 customer_id: string; status: string }>(
+        `SELECT id, invoice_number, total, balance_due, customer_id, status FROM invoices
           WHERE id = $1 AND deleted_at IS NULL`, [invoice_id]);
       if (!inv.rows[0]) throw Object.assign(new Error('Invoice not found'), { status: 404 });
+
+      // One Source never funds an invoice the agency hasn't approved.
+      if (inv.rows[0].status !== 'approved' || Number(inv.rows[0].balance_due) <= 0) {
+        throw Object.assign(
+          new Error('Funding can be requested once the agency has approved the invoice'), { status: 422 });
+      }
 
       // Check for an existing request before the document check. The partial
       // unique index would catch a duplicate anyway, but only after the document
@@ -227,12 +288,12 @@ factoringRouter.post(
           new Error('A funding request is already open for this invoice'), { status: 409 });
       }
 
-      const docs = await c.query<{ n: string }>(
-        `SELECT COUNT(*) AS n FROM file_attachments
-          WHERE entity_type = 'funding_request_draft' AND entity_id = $1`, [invoice_id]);
-      if (Number(docs.rows[0]!.n) === 0) {
-        throw Object.assign(
-          new Error('Attach a copy of the invoice before requesting funding'), { status: 422 });
+      // Proof of approval, of a kind this agency's rule accepts, must be on file.
+      const reqmt = await approvalRequirement(c, invoice_id);
+      if (!reqmt.satisfied) {
+        throw Object.assign(new Error(
+          `Attach proof that the agency approved this invoice: ${reqmt.accepted.map((t) => DOC_TYPE_LABELS[t as DocType] ?? t).join(' or ')}`),
+          { status: 422 });
       }
 
       const customer = await c.query<{ name: string }>(
@@ -245,7 +306,20 @@ factoringRouter.post(
         [req.auth.companyId, invoice_id, inv.rows[0].total,
          customer.rows[0]?.name ?? null, inv.rows[0].invoice_number, note ?? null, req.auth.userId]);
 
-      // Move the draft attachments onto the request now that it exists.
+      // Give the request its own copy of the invoice's documents. Copies, not
+      // moves: the contractor keeps them on the invoice, and underwriting gets
+      // a fixed set that later edits to the invoice can't change. The rows
+      // share the stored object (see the delete guard in files.router).
+      await c.query(
+        `INSERT INTO file_attachments
+           (company_id, job_id, entity_type, entity_id, original_name, storage_key,
+            content_type, size_bytes, scan_status, uploaded_by, doc_type)
+         SELECT company_id, job_id, 'funding_request', $1, original_name, storage_key,
+                content_type, size_bytes, scan_status, uploaded_by, doc_type
+           FROM file_attachments
+          WHERE entity_type = 'invoice' AND entity_id = $2`,
+        [r.rows[0]!['id'], invoice_id]);
+      // Older clients uploaded straight onto a draft keyed by invoice id.
       await c.query(
         `UPDATE file_attachments SET entity_type = 'funding_request', entity_id = $1
           WHERE entity_type = 'funding_request_draft' AND entity_id = $2`,

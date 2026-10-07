@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Shield, Loader2, LogOut, Upload, AlertTriangle } from 'lucide-react';
 import { adminApi, useAdminStore, hasAdminToken } from '../../lib/admin-api';
+import { DebtorsPanel } from './DebtorsPanel';
 import { formatCurrency, formatDate } from '../../lib/api';
 import { factoredInvoiceRef } from '@constructpm/shared';
 import { UnderwritingQueue } from './UnderwritingQueue';
@@ -437,15 +438,7 @@ export function AdminConsolePage() {
         {/* Median DSO next to median open age is the slowdown, read directly:
             an agency that normally settles in 32 days holding 130-day-old paper
             is the thing to notice before it turns into a queue of declines. */}
-        {tab === 'Debtors' && <SimpleTable
-          queryKey="admin-debtors" url="/debtors"
-          columns={[
-            ['legal_name', 'Agency'], ['client_count', 'Clients'],
-            ['invoice_count', 'Open'], ['exposure', 'Exposure', 'money'],
-            ['median_dso', 'Normal days', 'days'], ['median_open_age', 'Open age', 'days'],
-            ['in_slowdown', 'Slowdown', 'flag'],
-            ['credit_limit', 'Credit limit', 'money'],
-          ]} />}
+        {tab === 'Debtors' && <DebtorsPanel />}
         {tab === 'Import' && <ImportPanel />}
         {tab === 'Audit' && <SimpleTable
           queryKey="admin-audit" url="/audit"

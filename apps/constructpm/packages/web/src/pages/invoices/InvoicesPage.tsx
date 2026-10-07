@@ -1,321 +1,265 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, FileText, DollarSign, Loader2, Search, CheckCircle, Banknote } from 'lucide-react';
-import { ContactPicker } from '../../components/ContactPicker';
+import { useQuery } from '@tanstack/react-query';
+import { Plus, FileText, Search, Banknote, Paperclip } from 'lucide-react';
+import { api, formatCurrency, formatDate } from '../../lib/api';
+import { useAuthStore } from '../../stores/auth.store';
+import {
+  type InvoiceAction, invoiceStatusBadge, invoiceStatusLabel, isAwaitingAgency, nextAction,
+  canEditInvoices, canRecordPayments, canSeeFunding, FUNDING_BADGE, FUNDING_LABEL, daysSince,
+} from '../../lib/invoices';
+import { LogInvoiceModal } from '../../components/invoices/LogInvoiceModal';
+import { InvoiceDrawer } from '../../components/invoices/InvoiceDrawer';
+import { InvoiceActionModal, type ActionInvoice } from '../../components/invoices/InvoiceActionModal';
 import { RequestFundingModal } from '../../components/RequestFundingModal';
 
-// A request is a request, not an advance — the wording stays deliberately
-// non-committal until OneSource actually funds it.
-const FUNDING_BADGE: Record<string, string> = {
-  submitted: 'badge-blue', under_review: 'badge-yellow', approved: 'badge-green',
-  declined: 'badge-red', withdrawn: 'badge-gray',
-};
-import { api, formatCurrency, formatDate } from '../../lib/api';
-import { toast } from 'sonner';
-
-const STATUS_COLORS: Record<string, string> = {
-  draft: 'badge-gray', sent: 'badge-blue', viewed: 'badge-blue',
-  partially_paid: 'badge-yellow', paid: 'badge-green',
-  overdue: 'badge-red', void: 'badge-gray',
-};
-
-function NewInvoiceModal({ onClose }: { onClose: () => void }) {
-  const qc = useQueryClient();
-  const [form, setForm] = useState({
-    job_id: '', customer_id: '', due_date: '',
-    notes: '', tax_rate: '0',
-    items: [{ description: '', quantity: '1', unit_price: '' }],
-  });
-  const [loading, setLoading] = useState(false);
-
-  const { data: jobsData } = useQuery({ queryKey: ['jobs'], queryFn: () => api.get('/jobs?per_page=100').then(r => r.data.data) });
-  const { data: contactsData } = useQuery({ queryKey: ['contacts-customers'], queryFn: () => api.get('/contacts?type=customer').then(r => r.data.data) });
-
-  const jobs = jobsData ?? [];
-  const contacts = contactsData ?? [];
-
-  const issueDate = new Date().toISOString().split('T')[0]!;
-  const defaultDue = new Date(Date.now() + 30 * 86400_000).toISOString().split('T')[0]!;
-
-  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { description: '', quantity: '1', unit_price: '' }] }));
-  const updateItem = (i: number, k: string, v: string) =>
-    setForm(f => { const items = [...f.items]; items[i] = { ...items[i]!, [k]: v }; return { ...f, items }; });
-  const removeItem = (i: number) => setForm(f => ({ ...f, items: f.items.filter((_, idx) => idx !== i) }));
-
-  const subtotal = form.items.reduce((s, i) => s + (parseFloat(i.quantity) || 0) * (parseFloat(i.unit_price) || 0), 0);
-  const tax = subtotal * ((parseFloat(form.tax_rate) || 0) / 100);
-  const total = subtotal + tax;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.job_id || !form.customer_id) { toast.error('Job and customer required'); return; }
-    if (form.items.some(i => !i.description || !i.unit_price)) { toast.error('All line items need description and price'); return; }
-    setLoading(true);
-    try {
-      await api.post('/invoices', {
-        job_id: form.job_id, customer_id: form.customer_id,
-        issue_date: issueDate, due_date: form.due_date || defaultDue,
-        tax_rate: parseFloat(form.tax_rate) || 0,
-        notes: form.notes || undefined,
-        items: form.items.map(i => ({
-          description: i.description,
-          quantity: parseFloat(i.quantity) || 1,
-          unit_price: parseFloat(i.unit_price) || 0,
-        })),
-      });
-      toast.success('Invoice created');
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      onClose();
-    } catch { toast.error('Failed to create invoice'); }
-    finally { setLoading(false); }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="p-6 border-b border-slate-200">
-          <h3 className="text-lg font-semibold">New Invoice</h3>
-        </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="label">Job *</label>
-              <select className="input" value={form.job_id} onChange={e => setForm(f => ({ ...f, job_id: e.target.value }))} required>
-                <option value="">— Select Job —</option>
-                {jobs.map((j: Record<string, string>) => <option key={j['id']} value={j['id']}>{j['job_number']} — {j['name']}</option>)}
-              </select>
-            </div>
-            <ContactPicker
-              id="invoice_customer"
-              label="Bill To *"
-              required
-              value={form.customer_id}
-              onChange={(id) => setForm(f => ({ ...f, customer_id: id }))}
-            />
-            <div>
-              <label className="label">Due Date</label>
-              <input className="input" type="date" value={form.due_date || defaultDue} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
-            </div>
-            <div>
-              <label className="label">Tax Rate (%)</label>
-              <input className="input" type="number" min="0" step="0.1" value={form.tax_rate} onChange={e => setForm(f => ({ ...f, tax_rate: e.target.value }))} />
-            </div>
-          </div>
-
-          {/* Line items */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="label mb-0">Line Items</label>
-              <button type="button" onClick={addItem} className="btn-ghost btn-sm">
-                <Plus className="w-3 h-3" /> Add Line
-              </button>
-            </div>
-            <div className="space-y-2">
-              {form.items.map((item, i) => (
-                <div key={i} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
-                  <input className="input col-span-6 text-sm" value={item.description} onChange={e => updateItem(i, 'description', e.target.value)} placeholder="Description" />
-                  <input className="input col-span-2 text-sm text-right" type="number" min="0" step="0.01" value={item.quantity} onChange={e => updateItem(i, 'quantity', e.target.value)} placeholder="Qty" />
-                  <input className="input col-span-3 text-sm text-right" type="number" min="0" step="0.01" value={item.unit_price} onChange={e => updateItem(i, 'unit_price', e.target.value)} placeholder="Unit $" />
-                  <button type="button" onClick={() => removeItem(i)} className="text-slate-300 hover:text-red-500 text-lg leading-none">×</button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Totals */}
-          <div className="bg-slate-50 rounded-lg p-4 space-y-1 text-sm">
-            <div className="flex justify-between text-slate-600"><span>Subtotal</span><span>{formatCurrency(subtotal)}</span></div>
-            {tax > 0 && <div className="flex justify-between text-slate-600"><span>Tax ({form.tax_rate}%)</span><span>{formatCurrency(tax)}</span></div>}
-            <div className="flex justify-between font-bold text-slate-900 text-base border-t border-slate-200 pt-1 mt-1">
-              <span>Total</span><span>{formatCurrency(total)}</span>
-            </div>
-          </div>
-
-          <div>
-            <label className="label">Notes</label>
-            <textarea className="input" rows={2} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
-          </div>
-
-          <div className="flex justify-end gap-3 pt-2 border-t border-slate-100">
-            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button type="submit" className="btn-primary" disabled={loading}>
-              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-              Create Invoice
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
+interface InvoiceRow extends ActionInvoice {
+  job_name: string | null;
+  job_number: string | null;
+  submitted_on: string | null;
+  approved_on: string | null;
+  due_date: string;
+  document_count: number;
+  has_approval_doc: boolean;
 }
 
-export function InvoicesPage() {
-  const [fundingFor, setFundingFor] = useState<
-    { id: string; invoice_number: string; total: number } | null>(null);
+// Filter options, in the order an invoice moves through them.
+const STATUS_FILTERS: { value: string; label: string }[] = [
+  { value: 'draft', label: 'Not submitted' },
+  { value: 'sent', label: 'Submitted to agency' },
+  { value: 'returned', label: 'Returned for correction' },
+  { value: 'approved', label: 'Approved by agency' },
+  { value: 'partially_paid', label: 'Partially paid' },
+  { value: 'paid', label: 'Paid' },
+  { value: 'void', label: 'Void' },
+];
 
-  // Which invoices already have a request against them, so the row shows status
-  // instead of offering to request again. Finance-only endpoint, so a 403 for
-  // other roles is expected and simply yields no badges.
+/** "Where is it with the agency" in a few words, for the list. */
+function stageNote(inv: InvoiceRow): string {
+  if (isAwaitingAgency(inv.status) && inv.submitted_on) {
+    const d = daysSince(inv.submitted_on);
+    return d === 0 ? 'Submitted today' : `Waiting ${d} day${d === 1 ? '' : 's'}`;
+  }
+  if (inv.status === 'approved' && inv.approved_on) return `Approved ${formatDate(inv.approved_on)}`;
+  return '';
+}
+
+/**
+ * Invoices: a tracker for what has been billed to each agency and where it
+ * stands. The contractor bills the agency however they already do; this page
+ * records each step — submitted, approved or returned, paid — and opens
+ * funding once the agency approves.
+ */
+export function InvoicesPage() {
+  const role = useAuthStore((s) => s.user?.role);
+  const [showNew, setShowNew] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [quick, setQuick] = useState<{ invoice: InvoiceRow; action: InvoiceAction } | null>(null);
+  const [fundingFor, setFundingFor] = useState<InvoiceRow | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const showFunding = canSeeFunding(role);
+
+  // Which invoices already have a funding request, so the row shows its status
+  // instead of offering to request again.
   const { data: fundingRequests } = useQuery({
     queryKey: ['factoring-requests'],
-    queryFn: () => api.get('/factoring/requests').then(r => r.data.data).catch(() => []),
+    queryFn: () => api.get('/factoring/requests').then((r) => r.data.data).catch(() => []),
+    enabled: showFunding,
   });
   const fundingByInvoice: Record<string, string> = Object.fromEntries(
     (fundingRequests ?? [])
       .filter((r: Record<string, string>) => r['status'] !== 'withdrawn')
       .map((r: Record<string, string>) => [r['invoice_id'], r['status']])
   );
-  const qc = useQueryClient();
-  const [showNew, setShowNew] = useState(false);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['invoices', search, statusFilter],
-    queryFn: () => api.get(`/invoices?status=${statusFilter}`).then(r => r.data.data),
+  // Funding clients get "Request funding" as the next step on approved
+  // invoices. Software-only users get "Record payment"; funding stays one click
+  // away inside the invoice, without being pushed on every row.
+  const { data: fundingSummary } = useQuery({
+    queryKey: ['factoring-summary'],
+    queryFn: () => api.get('/factoring/summary').then((r) => r.data.data).catch(() => null),
+    enabled: showFunding,
+  });
+  const isFundingClient = showFunding && fundingSummary?.enabled === true && fundingSummary?.status === 'active';
+
+  const { data, isLoading } = useQuery<InvoiceRow[]>({
+    queryKey: ['invoices', statusFilter],
+    queryFn: () => api.get(`/invoices?status=${encodeURIComponent(statusFilter)}`).then((r) => r.data.data),
   });
 
-  const sendMutation = useMutation({
-    mutationFn: (id: string) => api.patch(`/invoices/${id}/send`),
-    onSuccess: () => { toast.success('Invoice sent'); qc.invalidateQueries({ queryKey: ['invoices'] }); },
-    onError: () => toast.error('Failed to send invoice'),
-  });
-
-  const recordPaymentMutation = useMutation({
-    mutationFn: ({ id, amount }: { id: string; amount: number }) =>
-      api.patch(`/invoices/${id}/record-payment`, { amount }),
-    onSuccess: () => { toast.success('Payment recorded'); qc.invalidateQueries({ queryKey: ['invoices'] }); },
-    onError: () => toast.error('Failed to record payment'),
-  });
-
-  const invoices: Record<string, unknown>[] = Array.isArray(data) ? data : [];
-  const filtered = search
-    ? invoices.filter(i => (i['invoice_number'] as string)?.toLowerCase().includes(search.toLowerCase()) ||
-                          (i['customer_name'] as string)?.toLowerCase().includes(search.toLowerCase()))
+  const invoices = data ?? [];
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? invoices.filter((i) =>
+        [i.invoice_number, i.customer_name, i.job_name, i.agency_reference]
+          .some((v) => v?.toLowerCase().includes(q)))
     : invoices;
 
-  const totalOutstanding = invoices
-    .filter(i => !['paid', 'void'].includes(i['status'] as string))
-    .reduce((s, i) => s + Number(i['balance_due'] ?? 0), 0);
+  const outstanding = invoices
+    .filter((i) => !['draft', 'paid', 'void'].includes(i.status))
+    .reduce((s, i) => s + Number(i.balance_due ?? 0), 0);
+  const awaiting = invoices.filter((i) => isAwaitingAgency(i.status)).length;
+  const approvedUnpaid = invoices.filter((i) => i.status === 'approved').length;
+
+  const canQuick = (a: InvoiceAction) => (a === 'payment' ? canRecordPayments(role) : canEditInvoices(role));
 
   return (
     <div className="page max-w-7xl mx-auto space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="page-header mb-0">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Invoices</h1>
-          {totalOutstanding > 0 && (
-            <p className="text-sm text-slate-500 mt-0.5">{formatCurrency(totalOutstanding)} outstanding</p>
-          )}
+          <p className="text-sm text-slate-500 mt-0.5">
+            Track what you&rsquo;ve billed each agency, from submission to payment.
+          </p>
         </div>
-        <button onClick={() => setShowNew(true)} className="btn-primary btn-sm">
-          <Plus className="w-4 h-4" /> New Invoice
-        </button>
+        {canEditInvoices(role) && (
+          <button onClick={() => setShowNew(true)} className="btn-primary btn-sm">
+            <Plus className="w-4 h-4" /> Log invoice
+          </button>
+        )}
       </div>
 
+      {invoices.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="card p-4">
+            <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Outstanding</p>
+            <p className="text-xl font-bold tabular-nums mt-1">{formatCurrency(outstanding)}</p>
+            <p className="text-xs text-slate-500">Submitted and not yet paid</p>
+          </div>
+          <div className="card p-4">
+            <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Waiting on approval</p>
+            <p className="text-xl font-bold tabular-nums mt-1">{awaiting}</p>
+            <p className="text-xs text-slate-500">With the agency</p>
+          </div>
+          <div className="card p-4">
+            <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Approved, awaiting payment</p>
+            <p className="text-xl font-bold tabular-nums mt-1">{approvedUnpaid}</p>
+            <p className="text-xs text-slate-500">{isFundingClient ? 'Eligible for funding' : 'Agency has approved'}</p>
+          </div>
+        </div>
+      )}
+
       {/* Filters */}
-      <div className="flex gap-3">
+      <div className="filter-bar mb-0">
         <div className="relative w-full sm:max-w-xs">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input className="input pl-9" placeholder="Search invoices..." value={search} onChange={e => setSearch(e.target.value)} />
+          <input className="input pl-9" placeholder="Search number, agency, job, ref…" value={search}
+                 onChange={(e) => setSearch(e.target.value)} aria-label="Search invoices" />
         </div>
-        <select className="input w-36" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-          <option value="">All status</option>
-          {['draft','sent','partially_paid','paid','overdue','void'].map(s => (
-            <option key={s} value={s}>{s.replace('_', ' ')}</option>
-          ))}
+        <select className="input w-full sm:w-56" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+                aria-label="Filter by status">
+          <option value="">All statuses</option>
+          {STATUS_FILTERS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
       </div>
 
       {/* Table */}
       <div className="card overflow-x-auto">
-        <table className="w-full min-w-[40rem]">
+        <table className="w-full min-w-[46rem]">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
-              <th className="table-header">Invoice #</th>
-              <th className="table-header">Job</th>
-              <th className="table-header">Customer</th>
-              <th className="table-header">Issue Date</th>
-              <th className="table-header">Due Date</th>
-              <th className="table-header text-right">Total</th>
-              <th className="table-header text-right">Balance</th>
+              <th className="table-header">Invoice</th>
+              <th className="table-header">Agency</th>
+              <th className="table-header">Submitted</th>
+              <th className="table-header text-right">Amount</th>
               <th className="table-header">Status</th>
-              <th className="table-header">Funding</th>
-              <th className="table-header" />
+              <th className="table-header"><span className="sr-only">Next step</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {isLoading ? (
-              <tr><td colSpan={10} className="table-cell text-center py-8 text-slate-400">Loading...</td></tr>
+              <tr><td colSpan={6} className="table-cell text-center py-8 text-slate-400">Loading…</td></tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={10} className="py-12 text-center">
+                <td colSpan={6} className="py-12 text-center">
                   <FileText className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                  <p className="text-slate-500">No invoices yet</p>
+                  <p className="text-slate-600 font-medium">{invoices.length ? 'No invoices match' : 'No invoices yet'}</p>
+                  {!invoices.length && (
+                    <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
+                      Bill the agency the way you normally do, then log the invoice here to track it
+                      through approval and payment.
+                    </p>
+                  )}
+                  {!invoices.length && canEditInvoices(role) && (
+                    <button onClick={() => setShowNew(true)} className="btn-primary btn-sm mt-4">
+                      <Plus className="w-4 h-4" /> Log your first invoice
+                    </button>
+                  )}
                 </td>
               </tr>
             ) : (
-              filtered.map(inv => (
-                <tr key={inv['id'] as string} className="hover:bg-slate-50">
-                  <td className="table-cell font-mono text-sm font-medium text-brand-600">{inv['invoice_number'] as string}</td>
-                  <td className="table-cell text-slate-600">{(inv['job_name'] as string) ?? '—'}</td>
-                  <td className="table-cell">{inv['customer_name'] as string}</td>
-                  <td className="table-cell text-slate-500">{formatDate(inv['issue_date'] as string)}</td>
-                  <td className="table-cell text-slate-500">{formatDate(inv['due_date'] as string)}</td>
-                  <td className="table-cell text-right font-semibold">{formatCurrency(inv['total'] as number)}</td>
-                  <td className="table-cell text-right">{formatCurrency(inv['balance_due'] as number)}</td>
-                  <td className="table-cell">
-                    <span className={STATUS_COLORS[inv['status'] as string] ?? 'badge-gray'}>
-                      {(inv['status'] as string)?.replace('_', ' ')}
-                    </span>
-                  </td>
-                  <td className="table-cell">
-                    {fundingByInvoice[inv['id'] as string]
-                      ? <span className={FUNDING_BADGE[fundingByInvoice[inv['id'] as string]!] ?? 'badge-gray'}>
-                          {fundingByInvoice[inv['id'] as string]!.replace('_', ' ')}
+              filtered.map((inv) => {
+                const next = nextAction(inv.status);
+                const funding = fundingByInvoice[inv.id];
+                const note = stageNote(inv);
+                return (
+                  <tr key={inv.id} className="hover:bg-slate-50">
+                    <td className="table-cell">
+                      <button className="font-mono text-sm font-medium text-brand-600 hover:underline text-left"
+                              onClick={() => setOpenId(inv.id)}>
+                        {inv.invoice_number}
+                      </button>
+                      {inv.document_count > 0 && (
+                        <span className="ml-2 inline-flex items-center gap-0.5 text-xs text-slate-400"
+                              title={`${inv.document_count} document${inv.document_count === 1 ? '' : 's'}`}>
+                          <Paperclip className="w-3 h-3" />{inv.document_count}
                         </span>
-                      : <button className="btn-secondary btn-sm"
-                                onClick={() => setFundingFor({
-                                  id: inv['id'] as string,
-                                  invoice_number: inv['invoice_number'] as string,
-                                  total: inv['total'] as number,
-                                })}>
+                      )}
+                    </td>
+                    <td className="table-cell">
+                      {inv.customer_name}
+                      {inv.job_name && (
+                        <div className="text-xs text-slate-500 truncate max-w-[14rem]">{inv.job_name}</div>
+                      )}
+                    </td>
+                    <td className="table-cell text-slate-500">
+                      {inv.submitted_on ? formatDate(inv.submitted_on) : '—'}
+                      {note && <div className="text-xs text-slate-400">{note}</div>}
+                    </td>
+                    <td className="table-cell text-right tabular-nums">
+                      <span className="font-semibold">{formatCurrency(inv.total)}</span>
+                      {Number(inv.balance_due) !== Number(inv.total) && inv.status !== 'void' && (
+                        <div className="text-xs text-slate-500">{formatCurrency(inv.balance_due)} due</div>
+                      )}
+                    </td>
+                    <td className="table-cell">
+                      <span className={invoiceStatusBadge(inv.status)}>{invoiceStatusLabel(inv.status)}</span>
+                      {showFunding && funding && (
+                        <div className="mt-1">
+                          <span className={FUNDING_BADGE[funding] ?? 'badge-gray'}>{FUNDING_LABEL[funding] ?? funding}</span>
+                        </div>
+                      )}
+                    </td>
+                    <td className="table-cell text-right">
+                      {isFundingClient && !funding && inv.status === 'approved' && Number(inv.balance_due) > 0 ? (
+                        <button className="btn-primary btn-sm" onClick={() => setFundingFor(inv)}>
                           <Banknote className="w-3.5 h-3.5" /> Request funding
-                        </button>}
-                  </td>
-                  <td className="table-cell">
-                    <div className="flex gap-1">
-                      {inv['status'] === 'draft' && (
-                        <button
-                          onClick={() => sendMutation.mutate(inv['id'] as string)}
-                          className="btn-secondary btn-sm"
-                          disabled={sendMutation.isPending}
-                        >
-                          Send
                         </button>
-                      )}
-                      {['sent','partially_paid','overdue'].includes(inv['status'] as string) && (
-                        <button
-                          onClick={() => {
-                            const amt = prompt(`Record payment (balance: ${formatCurrency(inv['balance_due'] as number)})`);
-                            if (amt) recordPaymentMutation.mutate({ id: inv['id'] as string, amount: parseFloat(amt) });
-                          }}
-                          className="btn-primary btn-sm"
-                        >
-                          <CheckCircle className="w-3 h-3" /> Pay
+                      ) : next && canQuick(next.action) ? (
+                        <button className="btn-secondary btn-sm" onClick={() => setQuick({ invoice: inv, action: next.action })}>
+                          {next.label}
                         </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
       </div>
 
-      {showNew && <NewInvoiceModal onClose={() => setShowNew(false)} />}
+      {showNew && <LogInvoiceModal onClose={() => setShowNew(false)} />}
+      {openId && (
+        <InvoiceDrawer invoiceId={openId} fundingStatus={fundingByInvoice[openId]} onClose={() => setOpenId(null)} />
+      )}
+      {quick && <InvoiceActionModal invoice={quick.invoice} action={quick.action} onClose={() => setQuick(null)} />}
       {fundingFor && (
-        <RequestFundingModal invoice={fundingFor} onClose={() => setFundingFor(null)} />
+        <RequestFundingModal
+          invoice={{ id: fundingFor.id, invoice_number: fundingFor.invoice_number, total: fundingFor.total,
+                     customer_name: fundingFor.customer_name ?? undefined }}
+          onClose={() => setFundingFor(null)}
+        />
       )}
     </div>
   );

@@ -114,6 +114,61 @@ describe.runIf(enabled)('row-level security', () => {
     ).rejects.toThrow(/row-level security/i);
   });
 
+  describe('invoice payments (V011)', () => {
+    let rivalInvoice = '';
+    beforeAll(async () => {
+      const job = await owner.query<{ id: string }>(`SELECT id FROM jobs WHERE job_number = 'R-1' AND company_id = $1`, [RIVAL]);
+      const contact = await owner.query<{ id: string }>(
+        `INSERT INTO contacts (company_id, name, type) VALUES ($1, 'Rival Agency', 'customer') RETURNING id`, [RIVAL]);
+      const inv = await owner.query<{ id: string }>(
+        `INSERT INTO invoices (company_id, job_id, customer_id, invoice_number, due_date, total, balance_due, created_by)
+         VALUES ($1,$2,$3,'R-INV-1',CURRENT_DATE,1000,1000,$4) RETURNING id`,
+        [RIVAL, job.rows[0]!.id, contact.rows[0]!.id, RIVAL_USER]);
+      rivalInvoice = inv.rows[0]!.id;
+      await owner.query(
+        `INSERT INTO invoice_payments (company_id, invoice_id, amount, paid_on, recorded_by)
+         VALUES ($1,$2,250,CURRENT_DATE,$3)`, [RIVAL, rivalInvoice, RIVAL_USER]);
+    });
+
+    it('hides another tenant’s payments', async () => {
+      const rows = await asTenant(ACME, 'SELECT * FROM invoice_payments WHERE invoice_id = $1', [rivalInvoice]);
+      expect(rows).toHaveLength(0);
+    });
+
+    it('cannot record a payment against another tenant', async () => {
+      await expect(asTenant(ACME,
+        `INSERT INTO invoice_payments (company_id, invoice_id, amount, paid_on, recorded_by)
+         VALUES ($1,$2,1,CURRENT_DATE,$3)`, [RIVAL, rivalInvoice, ACME_USER])).rejects.toThrow(/row-level security/i);
+    });
+
+    it('treats recorded payments as a record: no edits or deletes', async () => {
+      await expect(asTenant(RIVAL, `UPDATE invoice_payments SET amount = 1 WHERE invoice_id = $1`, [rivalInvoice]))
+        .rejects.toThrow(/permission denied/i);
+      await expect(asTenant(RIVAL, `DELETE FROM invoice_payments WHERE invoice_id = $1`, [rivalInvoice]))
+        .rejects.toThrow(/permission denied/i);
+    });
+  });
+
+  describe('agency approval rule (V011)', () => {
+    it('lets a tenant read the rule but not the agency table', async () => {
+      await owner.query(`DELETE FROM factoring_debtors WHERE legal_name = 'RLS Test Agency'`);
+      await owner.query(
+        `INSERT INTO factoring_debtors (legal_name, dba, credit_limit, risk_grade, approval_evidence, approval_instructions)
+         VALUES ('RLS Test Agency', 'RTA', 999999, 'C', ARRAY['portal_screenshot'], 'Upload the portal screen')`);
+      try {
+        const viaDba = await asTenant<{ accepted: string[]; instructions: string }>(
+          ACME, `SELECT * FROM agency_approval_requirement($1)`, ['  rta ']);
+        expect(viaDba[0]).toEqual({ accepted: ['portal_screenshot'], instructions: 'Upload the portal screen' });
+        const unknown = await asTenant<{ accepted: string[]; instructions: string | null }>(
+          ACME, `SELECT * FROM agency_approval_requirement($1)`, ['Nobody We Know']);
+        expect(unknown[0]).toEqual({ accepted: ['approved_invoice'], instructions: null });
+        await expect(asTenant(ACME, 'SELECT credit_limit FROM factoring_debtors')).rejects.toThrow(/permission denied/i);
+      } finally {
+        await owner.query(`DELETE FROM factoring_debtors WHERE legal_name = 'RLS Test Agency'`);
+      }
+    });
+  });
+
   it('cannot delete another tenant’s rows', async () => {
     await asTenant(ACME, `DELETE FROM jobs WHERE job_number = 'R-1'`);
     const survived = await owner.query(`SELECT 1 FROM jobs WHERE job_number = 'R-1'`);
