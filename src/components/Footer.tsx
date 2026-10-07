@@ -3,7 +3,7 @@ import { Facebook, Twitter, Linkedin, Instagram, Youtube, Mail, Phone } from "lu
 import { CONTACT } from "@/lib/contact";
 
 const footerLinks = {
-  Company: ["About Us", "Our Team", "Careers", "Contact Us"],
+  Company: ["Why One Source", "About Us", "Our Team", "Careers", "Contact Us"],
   Partner: ["Referral Program", "Broker Program", "CPA Program"],
   "Invoice Funding": ["What is Invoice Funding", "How It Works", "Industries", "Freight Funding"],
   Resources: ["Blog", "FAQs", "Calculator", "Case Studies"],
@@ -17,8 +17,12 @@ const footerLinks = {
  * has a real page.
  */
 const FOOTER_ROUTES: Record<string, { route?: string; href?: string }> = {
-  "How It Works": { route: "/how-it-works" },
-  "Contact Us":   { href:  `mailto:${CONTACT.email}` },
+  "What is Invoice Funding": { route: "/invoice-funding" },
+  "How It Works":            { route: "/how-it-works" },
+  "Why One Source":          { route: "/why-one-source" },
+  Blog:                      { route: "/blog" },
+  FAQs:                      { route: "/faq" },
+  "Contact Us":              { href:  `mailto:${CONTACT.email}` },
 };
 
 const socialLinks = [

@@ -7,6 +7,7 @@ import {
 import TopBar from "@/components/TopBar";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 /**
  * /software — the second front door.
@@ -68,6 +69,12 @@ const FEATURES = [
 ];
 
 const Software = () => {
+  usePageMeta({
+    title: "Free Project & Invoice Management Software for Government Contractors | One Source",
+    description:
+      "Free software for government contractors: track jobs, budgets, invoices, AR aging and subcontractor compliance in one place. No obligation to use our funding.",
+    path: "/software",
+  });
   const reduce = useReducedMotion();
   const rise = (i: number) =>
     reduce

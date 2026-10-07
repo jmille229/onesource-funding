@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Every public route on the marketing site. Add a <url> here whenever a page or
+  article is added (src/App.tsx, src/content/articles.tsx).
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://os-funding.com/</loc><lastmod>2026-10-07</lastmod></url>
+  <url><loc>https://os-funding.com/invoice-funding</loc><lastmod>2026-10-07</lastmod></url>
+  <url><loc>https://os-funding.com/how-it-works</loc><lastmod>2026-10-07</lastmod></url>
+  <url><loc>https://os-funding.com/why-one-source</loc><lastmod>2026-10-07</lastmod></url>
+  <url><loc>https://os-funding.com/faq</loc><lastmod>2026-10-07</lastmod></url>
+  <url><loc>https://os-funding.com/software</loc><lastmod>2026-10-07</lastmod></url>
+  <url><loc>https://os-funding.com/blog</loc><lastmod>2026-10-07</lastmod></url>
+  <url><loc>https://os-funding.com/blog/what-is-micro-funding</loc><lastmod>2026-10-07</lastmod></url>
+  <url><loc>https://os-funding.com/blog/line-of-credit-vs-invoice-funding</loc><lastmod>2026-10-07</lastmod></url>
+  <url><loc>https://os-funding.com/blog/understanding-ucc-filings</loc><lastmod>2026-10-07</lastmod></url>
+</urlset>

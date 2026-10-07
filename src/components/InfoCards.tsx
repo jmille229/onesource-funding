@@ -1,24 +1,27 @@
+import { Link } from "react-router-dom";
 import { FileText, Shield, HelpCircle } from "lucide-react";
 import { motion } from "framer-motion";
+
+const MotionLink = motion.create(Link);
 
 const cards = [
   {
     icon: FileText,
     title: "What is Invoice Funding",
     description: "Invoice funding is the purchase of your accounts receivable for immediate cash, empowering businesses to grow without diluting equity or incurring debt.",
-    link: "#what-is-funding",
+    link: "/invoice-funding",
   },
   {
     icon: Shield,
     title: "Why Choose Us",
-    description: "Our entire business process is built around immediate response to client needs and the fastest cash turnaround in the industry. 24-hour funding guaranteed.",
-    link: "#why-choose",
+    description: "We work only with businesses that bill government agencies. A short application, approval within hours once you're set up, and real people who pick up the phone.",
+    link: "/why-one-source",
   },
   {
     icon: HelpCircle,
     title: "Funding FAQ",
     description: "We want to address any questions you might have regarding our program. Find answers to common questions about invoice funding.",
-    link: "#faq",
+    link: "/faq",
   },
 ];
 
@@ -39,9 +42,9 @@ const InfoCards = () => (
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
         {cards.map((card, i) => (
-          <motion.a
+          <MotionLink
             key={card.title}
-            href={card.link}
+            to={card.link}
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
@@ -56,7 +59,7 @@ const InfoCards = () => (
             <span className="inline-block mt-4 text-accent font-semibold text-sm group-hover:underline">
               Read More →
             </span>
-          </motion.a>
+          </MotionLink>
         ))}
       </div>
     </div>

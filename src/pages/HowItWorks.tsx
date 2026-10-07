@@ -6,6 +6,7 @@ import {
 import TopBar from "@/components/TopBar";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 /**
  * /how-it-works
@@ -70,6 +71,12 @@ const STEPS = [
 ];
 
 const HowItWorks = () => {
+  usePageMeta({
+    title: "How Invoice Funding Works for Government Contractors | One Source Funding",
+    description:
+      "How invoice funding (invoice factoring) works with One Source: a short application, submit an invoice for completed work, and get paid — often the same day.",
+    path: "/how-it-works",
+  });
   const reduce = useReducedMotion();
   const rise = (i: number) =>
     reduce
