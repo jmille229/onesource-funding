@@ -204,6 +204,8 @@ export function asyncHandler(fn: (req: Request, res: Response, next: NextFunctio
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   const message = err instanceof Error ? err.message : 'Internal server error';
   const status = (err as { status?: number }).status ?? 500;
+  // A machine-readable reason a client can branch on (e.g. 'funded_invoice').
+  const code = status < 500 ? (err as { code?: unknown }).code : undefined;
 
   if (status >= 500) {
     logger.error({ err, path: req.path, correlation_id: req.correlationId }, message);
@@ -216,6 +218,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
       ? 'An unexpected error occurred'
       : message,
     request_id: req.correlationId,
+    ...(typeof code === 'string' && /^[a-z_]+$/.test(code) ? { code } : {}),
   });
 }
 

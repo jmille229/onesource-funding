@@ -5,7 +5,7 @@ import { api, formatCurrency, formatDate } from '../../lib/api';
 import { useAuthStore } from '../../stores/auth.store';
 import {
   type InvoiceAction, invoiceStatusBadge, invoiceStatusLabel, isAwaitingAgency, nextAction,
-  canEditInvoices, canRecordPayments, canSeeFunding, FUNDING_BADGE, FUNDING_LABEL, daysSince,
+  canEditInvoices, canRecordPayments, canSeeFunding, FUNDING_BADGE, FUNDING_LABEL, daysSince, isFundedOpen,
 } from '../../lib/invoices';
 import { LogInvoiceModal } from '../../components/invoices/LogInvoiceModal';
 import { InvoiceDrawer } from '../../components/invoices/InvoiceDrawer';
@@ -20,6 +20,7 @@ interface InvoiceRow extends ActionInvoice {
   due_date: string;
   document_count: number;
   has_approval_doc: boolean;
+  funded_status: string | null;
 }
 
 // Filter options, in the order an invoice moves through them.
@@ -35,6 +36,9 @@ const STATUS_FILTERS: { value: string; label: string }[] = [
 
 /** "Where is it with the agency" in a few words, for the list. */
 function stageNote(inv: InvoiceRow): string {
+  if (isFundedOpen(inv.funded_status) && ['approved', 'partially_paid'].includes(inv.status)) {
+    return 'Funded · agency pays One Source';
+  }
   if (isAwaitingAgency(inv.status) && inv.submitted_on) {
     const d = daysSince(inv.submitted_on);
     return d === 0 ? 'Submitted today' : `Waiting ${d} day${d === 1 ? '' : 's'}`;
@@ -66,11 +70,19 @@ export function InvoicesPage() {
     queryFn: () => api.get('/factoring/requests').then((r) => r.data.data).catch(() => []),
     enabled: showFunding,
   });
-  const fundingByInvoice: Record<string, string> = Object.fromEntries(
-    (fundingRequests ?? [])
-      .filter((r: Record<string, string>) => r['status'] !== 'withdrawn')
-      .map((r: Record<string, string>) => [r['invoice_id'], r['status']])
-  );
+  // The API lists newest first; keep the latest non-withdrawn request per invoice.
+  const fundingByInvoice: Record<string, string> = {};
+  for (const r of (fundingRequests ?? []) as Record<string, string>[]) {
+    if (r['status'] !== 'withdrawn' && !(r['invoice_id']! in fundingByInvoice)) {
+      fundingByInvoice[r['invoice_id']!] = r['status']!;
+    }
+  }
+  /** Approved, unpaid, not funded, and no request in flight (a declined one can be retried). */
+  const canRequestFunding = (inv: InvoiceRow) => {
+    const f = fundingByInvoice[inv.id];
+    return inv.status === 'approved' && Number(inv.balance_due) > 0 && !isFundedOpen(inv.funded_status)
+      && (!f || f === 'declined');
+  };
 
   // Funding clients get "Request funding" as the next step on approved
   // invoices. Software-only users get "Record payment"; funding stays one click
@@ -100,6 +112,7 @@ export function InvoicesPage() {
     .reduce((s, i) => s + Number(i.balance_due ?? 0), 0);
   const awaiting = invoices.filter((i) => isAwaitingAgency(i.status)).length;
   const approvedUnpaid = invoices.filter((i) => i.status === 'approved').length;
+  const eligible = invoices.filter(canRequestFunding).length;
 
   const canQuick = (a: InvoiceAction) => (a === 'payment' ? canRecordPayments(role) : canEditInvoices(role));
 
@@ -134,7 +147,9 @@ export function InvoicesPage() {
           <div className="card p-4">
             <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Approved, awaiting payment</p>
             <p className="text-xl font-bold tabular-nums mt-1">{approvedUnpaid}</p>
-            <p className="text-xs text-slate-500">{isFundingClient ? 'Eligible for funding' : 'Agency has approved'}</p>
+            <p className="text-xs text-slate-500">
+              {isFundingClient ? `${eligible} eligible for funding` : 'Agency has approved'}
+            </p>
           </div>
         </div>
       )}
@@ -189,8 +204,9 @@ export function InvoicesPage() {
               </tr>
             ) : (
               filtered.map((inv) => {
-                const next = nextAction(inv.status);
-                const funding = fundingByInvoice[inv.id];
+                const next = nextAction(inv.status, inv.funded_status);
+                // An advance keyed in by One Source has no request behind it.
+                const funding = fundingByInvoice[inv.id] ?? (isFundedOpen(inv.funded_status) ? 'approved' : undefined);
                 const note = stageNote(inv);
                 return (
                   <tr key={inv.id} className="hover:bg-slate-50">
@@ -218,7 +234,7 @@ export function InvoicesPage() {
                     </td>
                     <td className="table-cell text-right tabular-nums">
                       <span className="font-semibold">{formatCurrency(inv.total)}</span>
-                      {Number(inv.balance_due) !== Number(inv.total) && inv.status !== 'void' && (
+                      {Number(inv.balance_due) !== Number(inv.total) && !['void', 'paid'].includes(inv.status) && (
                         <div className="text-xs text-slate-500">{formatCurrency(inv.balance_due)} due</div>
                       )}
                     </td>
@@ -231,7 +247,7 @@ export function InvoicesPage() {
                       )}
                     </td>
                     <td className="table-cell text-right">
-                      {isFundingClient && !funding && inv.status === 'approved' && Number(inv.balance_due) > 0 ? (
+                      {isFundingClient && canRequestFunding(inv) ? (
                         <button className="btn-primary btn-sm" onClick={() => setFundingFor(inv)}>
                           <Banknote className="w-3.5 h-3.5" /> Request funding
                         </button>

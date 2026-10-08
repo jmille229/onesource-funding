@@ -5,6 +5,7 @@ import { parsePagination } from '../../lib/pagination.js';
 import { enumParam, uuidParam } from '../../lib/query-params.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 import { SUBMISSION_METHODS } from '@constructpm/shared';
+import { notify, OPS_INBOX } from '../../lib/mailer.js';
 
 export const invoicesRouter = Router();
 
@@ -75,7 +76,16 @@ const paymentSchema = z.object({
   amount: z.number().positive(),
   paid_on: isoDate.optional(),
   reference: z.string().trim().max(100).optional().nullable(),
+  /** Required on a funded invoice: "yes, the agency paid me directly". */
+  confirm_direct_payment: z.boolean().optional(),
 });
+
+/**
+ * Funding state of the invoice: the latest advance against it, if any.
+ * 'pending' / 'advanced' mean the agency now pays One Source, not the client.
+ */
+const FUNDED_STATUS = `(SELECT fi.status::text FROM factored_invoices fi
+                         WHERE fi.invoice_id = i.id ORDER BY fi.created_at DESC LIMIT 1) AS funded_status`;
 
 const conflict = (message: string) => Object.assign(new Error(message), { status: 409 });
 
@@ -89,7 +99,7 @@ invoicesRouter.get('/', asyncHandler(async (req, res) => {
   if (status) { params.push(status); conds.push(`i.status=$${params.length}`); }
   params.push(parsePagination(req.query).limit);
   const r = await db.query(
-    `SELECT i.*, c.name customer_name, j.name job_name, j.job_number,
+    `SELECT i.*, c.name customer_name, j.name job_name, j.job_number, ${FUNDED_STATUS},
             -- How many documents are on file, and whether any is proof of approval.
             (SELECT COUNT(*) FROM file_attachments fa
               WHERE fa.entity_type='invoice' AND fa.entity_id=i.id)::int AS document_count,
@@ -111,14 +121,14 @@ invoicesRouter.get('/:id', asyncHandler(async (req, res) => {
   const [inv, items, payments] = await Promise.all([
     db.query(
       `SELECT i.*, c.name customer_name, c.email customer_email, c.address_line1 customer_address,
-              j.name job_name, j.job_number
+              j.name job_name, j.job_number, ${FUNDED_STATUS}
          FROM invoices i
          LEFT JOIN contacts c ON c.id=i.customer_id
          LEFT JOIN jobs j ON j.id=i.job_id
         WHERE i.id=$1 AND i.deleted_at IS NULL`, [req.params['id']]),
     db.query(`SELECT * FROM invoice_items WHERE invoice_id=$1 ORDER BY sort_order`, [req.params['id']]),
     db.query(
-      `SELECT p.id, p.amount, p.paid_on, p.reference, p.created_at,
+      `SELECT p.id, p.amount, p.paid_on, p.reference, p.created_at, p.source, p.paid_direct_on_funded,
               u.first_name || ' ' || u.last_name AS recorded_by_name
          FROM invoice_payments p LEFT JOIN users u ON u.id = p.recorded_by
         WHERE p.invoice_id=$1 ORDER BY p.paid_on, p.created_at`, [req.params['id']]),
@@ -221,12 +231,27 @@ invoicesRouter.patch('/:id/return', requireRole('owner','admin','project_manager
   res.json({ data: r.rows[0] });
 }));
 
-/** A payment received from the agency. One row per payment, so partials keep their own record. */
+/**
+ * A payment received from the agency. One row per payment, so partials keep
+ * their own record.
+ *
+ * On a funded invoice the agency should pay One Source, and One Source's
+ * collection marks the invoice paid automatically (V012). So a client
+ * recording a payment there most likely means the agency paid them directly:
+ * they must confirm it, and the report goes on One Source's ledger and to the
+ * ops inbox at once.
+ */
 invoicesRouter.patch('/:id/record-payment', requireRole('owner','admin','accountant'), validate(paymentSchema), asyncHandler(async (req, res) => {
   const b = req.body as z.infer<typeof paymentSchema>;
+  const paidOn = b.paid_on ?? today();
+  let reportedDirect = false;
   const row = await withTransaction(req.auth.companyId, async (c) => {
-    const cur = await c.query<{ status: string; balance_due: string }>(
-      `SELECT status, balance_due FROM invoices WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, [req.params['id']]);
+    const cur = await c.query<{ status: string; balance_due: string; invoice_number: string; customer_name: string | null; company_name: string | null }>(
+      `SELECT i.status, i.balance_due, i.invoice_number, ct.name AS customer_name, co.name AS company_name
+         FROM invoices i
+         LEFT JOIN contacts ct ON ct.id = i.customer_id
+         LEFT JOIN companies co ON co.id = i.company_id
+        WHERE i.id=$1 AND i.deleted_at IS NULL FOR UPDATE OF i`, [req.params['id']]);
     const inv = cur.rows[0];
     if (!inv) throw Object.assign(new Error('Invoice not found'), { status: 404 });
     if (['draft', 'returned', 'paid', 'void'].includes(inv.status)) {
@@ -235,10 +260,26 @@ invoicesRouter.patch('/:id/record-payment', requireRole('owner','admin','account
     if (b.amount > Number(inv.balance_due) + 0.005) {
       throw Object.assign(new Error(`That is more than the balance due (${inv.balance_due})`), { status: 422 });
     }
+
+    const funded = await c.query(
+      `SELECT 1 FROM factored_invoices WHERE invoice_id=$1 AND status IN ('pending','advanced') LIMIT 1`,
+      [req.params['id']]);
+    const isFunded = Boolean(funded.rows[0]);
+    if (isFunded && !b.confirm_direct_payment) {
+      throw Object.assign(
+        new Error('This invoice is funded by One Source, so the agency should pay One Source. Confirm that the agency paid you directly to record it.'),
+        { status: 409, code: 'funded_invoice' });
+    }
+
     await c.query(
-      `INSERT INTO invoice_payments (company_id, invoice_id, amount, paid_on, reference, recorded_by)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [req.auth.companyId, req.params['id'], b.amount.toFixed(2), b.paid_on ?? today(), b.reference || null, req.auth.userId]);
+      `INSERT INTO invoice_payments (company_id, invoice_id, amount, paid_on, reference, recorded_by, paid_direct_on_funded)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [req.auth.companyId, req.params['id'], b.amount.toFixed(2), paidOn, b.reference || null, req.auth.userId, isFunded]);
+    if (isFunded) {
+      await c.query(`SELECT report_direct_payment($1, $2, $3, $4)`,
+        [req.params['id'], b.amount.toFixed(2), paidOn, b.reference || null]);
+      reportedDirect = true;
+    }
     const r = await c.query(
       `UPDATE invoices SET
          paid_amount = paid_amount + $2,
@@ -248,9 +289,26 @@ invoicesRouter.patch('/:id/record-payment', requireRole('owner','admin','account
          updated_at = NOW()
        WHERE id=$1 RETURNING *`,
       [req.params['id'], b.amount.toFixed(2)]);
-    return r.rows[0];
+    return { ...r.rows[0], _meta: inv };
   });
-  res.json({ data: row });
+
+  const { _meta, ...invoice } = row as Record<string, unknown> & { _meta: { invoice_number: string; customer_name: string | null; company_name: string | null } };
+  if (reportedDirect) {
+    // Best-effort; the report is already on the ledger.
+    void notify({
+      to: OPS_INBOX,
+      subject: `Direct payment reported — ${_meta.company_name ?? 'client'} · ${_meta.invoice_number}`,
+      text: `A client reports the agency paid them directly on a funded invoice.\n\n`
+          + `Client:   ${_meta.company_name ?? '—'}\n`
+          + `Invoice:  ${_meta.invoice_number}\n`
+          + `Agency:   ${_meta.customer_name ?? '—'}\n`
+          + `Amount:   ${b.amount.toFixed(2)}\n`
+          + `Paid on:  ${paidOn}\n`
+          + `Ref:      ${b.reference || '—'}\n\n`
+          + `Review the advance in the operator console.`,
+    });
+  }
+  res.json({ data: invoice });
 }));
 
 invoicesRouter.patch('/:id/void', requireRole('owner','admin'), asyncHandler(async (req, res) => {

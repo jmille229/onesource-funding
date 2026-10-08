@@ -296,3 +296,105 @@ describe.runIf(enabled)('funding requests', () => {
     }
   });
 });
+
+/**
+ * V012: a One Source collection marks the client's invoice paid, and a client
+ * can report a direct payment on a funded invoice — but only on its own.
+ */
+describe.runIf(enabled)('payments on funded invoices', () => {
+  const CO = 'f4444444-4444-4444-4444-444444444444';
+  const OTHER = 'f5555555-5555-5555-5555-555555555555';
+  const SCHED = 'f0000000-0000-0000-0000-0000000000cc';
+  const DEBT = 'd0000000-0000-0000-0000-0000000000cc';
+  let ownerPool: pg.Pool;
+  let tenantPool: pg.Pool;
+  let invoiceId = '';
+  let advanceId = '';
+
+  beforeAll(async () => {
+    ownerPool = new pg.Pool({ connectionString: OWNER_URL });
+    tenantPool = new pg.Pool({ connectionString: APP_URL });
+    await ownerPool.query(
+      `INSERT INTO companies (id,name,slug) VALUES ($1,'Funded Co','funded-co'),($2,'Other Co','other-co')
+       ON CONFLICT (id) DO NOTHING`, [CO, OTHER]);
+    await ownerPool.query(
+      `INSERT INTO fee_schedules (id,name,tier_mode,advance_rate_pct,recourse_days)
+       VALUES ($1,'V012 Test','step',80,90) ON CONFLICT (id) DO NOTHING`, [SCHED]);
+    await ownerPool.query(`INSERT INTO factoring_debtors (id,legal_name) VALUES ($1,'V012 Agency') ON CONFLICT (id) DO NOTHING`, [DEBT]);
+    const fc = await ownerPool.query<{ id: string }>(
+      `INSERT INTO factoring_clients (company_id,status,default_fee_schedule_id) VALUES ($1,'active',$2) RETURNING id`, [CO, SCHED]);
+    const u = await ownerPool.query<{ id: string }>(
+      `INSERT INTO users (company_id,email,password_hash,first_name,last_name,role)
+       VALUES ($1,'v012@test.com','x','F','C','owner') RETURNING id`, [CO]);
+    const j = await ownerPool.query<{ id: string }>(
+      `INSERT INTO jobs (company_id,job_number,name,status,created_by) VALUES ($1,'F-1','Funded Job','active',$2) RETURNING id`,
+      [CO, u.rows[0]!.id]);
+    const ct = await ownerPool.query<{ id: string }>(
+      `INSERT INTO contacts (company_id,name,type) VALUES ($1,'V012 Agency','customer') RETURNING id`, [CO]);
+    const inv = await ownerPool.query<{ id: string }>(
+      `INSERT INTO invoices (company_id,job_id,customer_id,invoice_number,status,due_date,total,balance_due,created_by)
+       VALUES ($1,$2,$3,'F-INV-1','approved',CURRENT_DATE+30,10000,10000,$4) RETURNING id`,
+      [CO, j.rows[0]!.id, ct.rows[0]!.id, u.rows[0]!.id]);
+    invoiceId = inv.rows[0]!.id;
+    const fi = await ownerPool.query<{ id: string }>(
+      `INSERT INTO factored_invoices
+         (company_id,factoring_client_id,debtor_id,debtor_name,invoice_id,invoice_number,face_amount,
+          fee_schedule_id,advance_rate_pct,recourse_days,advance_amount,reserve_amount,status,advanced_on)
+       VALUES ($1,$2,$3,'V012 Agency',$4,'F-INV-1',10000,$5,80,90,8000,2000,'advanced',CURRENT_DATE-5) RETURNING id`,
+      [CO, fc.rows[0]!.id, DEBT, invoiceId, SCHED]);
+    advanceId = fi.rows[0]!.id;
+  });
+
+  afterAll(async () => {
+    await ownerPool?.query('DELETE FROM companies WHERE id = ANY($1)', [[CO, OTHER]]).catch(() => {});
+    await ownerPool?.query('DELETE FROM fee_schedules WHERE id=$1', [SCHED]).catch(() => {});
+    await ownerPool?.query('DELETE FROM factoring_debtors WHERE id=$1', [DEBT]).catch(() => {});
+    await ownerPool?.end().catch(() => {});
+    await tenantPool?.end().catch(() => {});
+  });
+
+  async function as(company: string, sql: string, params: unknown[] = []) {
+    const c = await tenantPool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SELECT set_config($1,$2,true)', ['app.company_id', company]);
+      const r = await c.query(sql, params);
+      await c.query('COMMIT');
+      return r;
+    } catch (e) {
+      await c.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally { c.release(); }
+  }
+
+  it('lets a client report a direct payment on its own funded invoice', async () => {
+    const r = await as(CO, `SELECT report_direct_payment($1, 10000, CURRENT_DATE, 'CHK 1') AS id`, [invoiceId]);
+    expect(r.rows[0]!['id']).toBeTruthy();
+    const ev = await ownerPool.query(
+      `SELECT memo FROM factoring_events WHERE factored_invoice_id=$1 AND event_type='direct_payment_reported'`, [advanceId]);
+    expect(ev.rows[0]!['memo']).toMatch(/paid them directly — ref CHK 1/);
+  });
+
+  it('ignores a report against another company’s invoice', async () => {
+    const r = await as(OTHER, `SELECT report_direct_payment($1, 1, NULL, NULL) AS id`, [invoiceId]);
+    expect(r.rows[0]!['id']).toBeNull();
+  });
+
+  it('marks the client invoice paid when One Source records the collection', async () => {
+    await ownerPool.query(
+      `INSERT INTO factoring_events (company_id,factored_invoice_id,event_type,amount,occurred_on)
+       VALUES ($1,$2,'payment_received',10000,CURRENT_DATE)`, [CO, advanceId]);
+    const inv = await ownerPool.query(`SELECT status, balance_due, paid_amount FROM invoices WHERE id=$1`, [invoiceId]);
+    expect(inv.rows[0]).toMatchObject({ status: 'paid', balance_due: '0.00', paid_amount: '10000.00' });
+    const pay = await ownerPool.query(`SELECT source, amount FROM invoice_payments WHERE invoice_id=$1`, [invoiceId]);
+    expect(pay.rows).toEqual([{ source: 'one_source', amount: '10000.00' }]);
+  });
+
+  it('never applies a second collection past zero', async () => {
+    await ownerPool.query(
+      `INSERT INTO factoring_events (company_id,factored_invoice_id,event_type,amount,occurred_on)
+       VALUES ($1,$2,'payment_received',500,CURRENT_DATE)`, [CO, advanceId]);
+    const pay = await ownerPool.query(`SELECT COUNT(*)::int AS n FROM invoice_payments WHERE invoice_id=$1`, [invoiceId]);
+    expect(pay.rows[0]!['n']).toBe(1);
+  });
+});

@@ -313,6 +313,11 @@ adminRouter.get('/invoices', asyncHandler(async (req, res) => {
   params.push(parsePagination(req.query, { defaultPerPage: 1000, maxPerPage: 5000 }).limit);
   const r = await pool().query(`
     SELECT fi.*, c.name AS company_name,
+           -- The client said the agency paid them directly (V012). Money owed to
+           -- One Source sitting in the client's account — worth seeing at once.
+           EXISTS (SELECT 1 FROM factoring_events fe
+                    WHERE fe.factored_invoice_id = fi.id
+                      AND fe.event_type = 'direct_payment_reported') AS direct_payment_reported,
            (COALESCE(fi.collected_on, CURRENT_DATE) - fi.advanced_on) AS days_outstanding,
            COALESCE(factoring_accrued_fee(fi.id),0) AS accrued_fee
       FROM factored_invoices fi
@@ -1065,7 +1070,11 @@ adminRouter.post(
         invoice_due_on: (b['invoice_due_on'] as string | null) ?? null,
         fee_schedule_id: (b['fee_schedule_id'] as string | null) ?? null,
         invoice_id: fr.rows[0]['invoice_id'] ?? null,
-        job_id: null,
+        // The invoice's job, so the client's Funding page links the advance to it.
+        job_id: fr.rows[0]['invoice_id']
+          ? ((await c.query<{ job_id: string }>(`SELECT job_id FROM invoices WHERE id = $1`,
+              [fr.rows[0]['invoice_id']])).rows[0]?.job_id ?? null)
+          : null,
         notes: `Funded from request ${req.params['id']}`,
       }, req.platform.userId, req.ip ?? null);
 

@@ -37,8 +37,18 @@ export function isAwaitingAgency(status: string): boolean {
 
 export type InvoiceAction = 'submit' | 'approve' | 'return' | 'payment';
 
+/**
+ * Funded by One Source and not yet collected: the agency pays One Source, and
+ * the invoice is marked paid automatically when One Source receives it.
+ */
+export function isFundedOpen(fundedStatus: string | null | undefined): boolean {
+  return fundedStatus === 'pending' || fundedStatus === 'advanced';
+}
+
 /** The one thing to do next on an invoice, shown as its primary button. */
-export function nextAction(status: string): { action: InvoiceAction; label: string } | null {
+export function nextAction(status: string, fundedStatus?: string | null): { action: InvoiceAction; label: string } | null {
+  // Nothing for the client to do on a funded invoice; payment comes to One Source.
+  if (isFundedOpen(fundedStatus) && (status === 'approved' || status === 'partially_paid')) return null;
   if (status === 'draft') return { action: 'submit', label: 'Mark submitted' };
   if (status === 'returned') return { action: 'submit', label: 'Mark resubmitted' };
   if (isAwaitingAgency(status)) return { action: 'approve', label: 'Mark approved' };
@@ -48,7 +58,7 @@ export function nextAction(status: string): { action: InvoiceAction; label: stri
 
 /** Funding request statuses, as the client sees them. */
 export const FUNDING_LABEL: Record<string, string> = {
-  submitted: 'Funding requested', under_review: 'Under review', approved: 'Funding approved',
+  submitted: 'Funding requested', under_review: 'Under review', approved: 'Funded',
   declined: 'Funding declined', withdrawn: 'Withdrawn',
 };
 export const FUNDING_BADGE: Record<string, string> = {
