@@ -44,8 +44,10 @@ const Navbar = () => {
     <nav className="bg-card sticky top-0 z-50 shadow-sm border-b border-border">
       <div className="container-wide flex items-center justify-between px-4 sm:px-6 lg:px-8 py-4">
         <Link to="/" className="flex items-center gap-2">
-          {/* 30% larger than the previous h-12 (48px) header mark, per request. */}
-          <img src="/logo.png" alt="One Source Funding" className="h-[62px]" />
+          {/* Sized so the "ONE SOURCE" wordmark matches the approved 62px header
+              mark. The current artwork's "1" extends further above and below
+              the words, so the image is taller (70px) for the same text size. */}
+          <img src="/logo.png" alt="One Source Funding" className="h-[70px] w-auto" />
         </Link>
 
         {/* Desktop Nav */}
