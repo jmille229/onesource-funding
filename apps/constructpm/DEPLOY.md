@@ -179,6 +179,44 @@ separate from client logins: different table, different token audience, and a
 database role that can reach the factoring tables and nothing else — not jobs,
 budgets, daily logs or subcontracts.
 
+### Turning on the funding application (apply.os-funding.com)
+
+Prospects apply for funding at `https://apply.os-funding.com` without an
+account; applications land under **Applications** in the operator console, and
+approving one creates the client's company, their login and an active funding
+client in one step. It needs the factoring console (above) and three things:
+
+1. **DNS.** Add an `A` record for `apply` pointing at the VPS (the same IP as
+   `app`). Caddy fetches the certificate by itself once the record resolves.
+
+2. **The encryption key** for applicants' EIN and Social Security numbers.
+   Generate it once and add it to `.env.production`:
+
+```bash
+echo "APPLICATION_DATA_KEY=$(openssl rand -base64 32)" >> .env.production
+grep APPLICATION_DATA_KEY .env.production   # copy this value into your password manager
+```
+
+   Keep a copy somewhere other than the server. If the key is lost, the numbers
+   already stored can't be read (applicants would have to re-enter them); if it
+   leaks, generate a new one and ask open applicants to re-enter theirs. Without
+   the key the application is switched off and says to call instead.
+
+3. **Redeploy** — this applies the migration and starts the apply site:
+
+```bash
+./infra/deploy.sh
+```
+
+`APPLY_DOMAIN` defaults to `apply.os-funding.com`; set it in `.env.production`
+to use another host. Email is optional: when SMTP isn't set up, every link an
+applicant or client needs (their application link, a request for more documents,
+the set-password link on approval) is shown on screen in the console to copy and
+send yourself.
+
+On the apply host only `/api/apply/*` reaches the API — login, client and
+operator routes answer 404 there.
+
 ### Backups
 
 ```bash

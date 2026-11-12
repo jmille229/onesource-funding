@@ -25,6 +25,9 @@ const companySettingsSchema = z.object({
   po_prefix:               z.string().max(16).optional(),
   co_prefix:               z.string().max(16).optional(),
   pay_app_prefix:          z.string().max(16).optional(),
+  // 'funding': a client onboarded through apply.os-funding.com sees their
+  // funding only; 'full' turns on the project and invoice tools.
+  portal_mode:             z.enum(['full', 'funding']).optional(),
 }).strict();
 
 // GET /api/settings/company

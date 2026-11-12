@@ -7,6 +7,7 @@ import { DebtorsPanel } from './DebtorsPanel';
 import { formatCurrency, formatDate } from '../../lib/api';
 import { factoredInvoiceRef } from '@constructpm/shared';
 import { UnderwritingQueue } from './UnderwritingQueue';
+import { ApplicationsPanel } from './ApplicationsPanel';
 
 // ─── Login ────────────────────────────────────────────────────────────────────
 function AdminLogin() {
@@ -374,7 +375,8 @@ function ImportPanel() {
 // ─── Console ──────────────────────────────────────────────────────────────────
 // Requests leads: it is the only tab with work waiting on it, and the queue is
 // where the underwriting engine actually earns its keep.
-const TABS = ['Requests', 'Advances', 'Clients', 'Debtors', 'Import', 'Audit'] as const;
+// Applications sits next to it: new clients from apply.os-funding.com.
+const TABS = ['Requests', 'Applications', 'Advances', 'Clients', 'Debtors', 'Import', 'Audit'] as const;
 
 export function AdminConsolePage() {
   const email = useAdminStore((s) => s.email);
@@ -382,8 +384,17 @@ export function AdminConsolePage() {
   const [tab, setTab] = useState<(typeof TABS)[number]>('Requests');
   const [funding, setFunding] = useState(false);
   const qc = useQueryClient();
+  const signedIn = Boolean(email) && hasAdminToken();
+  const { data: appCounts } = useQuery<Record<string, number>>({
+    queryKey: ['admin-application-counts'],
+    queryFn: () => adminApi.get('/applications/counts').then((r) => r.data.data),
+    enabled: signedIn,
+    refetchInterval: 120_000,
+  });
+  // Submitted (or resubmitted) and waiting on One Source, not on the applicant.
+  const waiting = appCounts?.['submitted'] ?? 0;
 
-  if (!email || !hasAdminToken()) return <AdminLogin />;
+  if (!signedIn) return <AdminLogin />;
 
   return (
     <div className="min-h-[100dvh] bg-slate-50">
@@ -409,6 +420,9 @@ export function AdminConsolePage() {
               className={`px-3 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${
                 tab === t ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
               {t}
+              {t === 'Applications' && waiting > 0 && (
+                <span className="ml-1.5 rounded-full bg-brand-600 text-white text-[11px] px-1.5 py-0.5 tabular-nums">{waiting}</span>
+              )}
             </button>
           ))}
         </div>
@@ -416,6 +430,7 @@ export function AdminConsolePage() {
 
       <main className="max-w-7xl mx-auto page">
         {tab === 'Requests' && <UnderwritingQueue />}
+        {tab === 'Applications' && <ApplicationsPanel />}
         {tab === 'Advances' && (
           <>
             <div className="page-header">

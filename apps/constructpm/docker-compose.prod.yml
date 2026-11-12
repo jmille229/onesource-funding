@@ -196,6 +196,13 @@ services:
       OPS_NOTIFICATION_EMAIL: ${OPS_NOTIFICATION_EMAIL:-}
       APP_URL: https://${DOMAIN:?set DOMAIN in .env.production}
       API_URL: https://${DOMAIN}
+      # The public funding application. Its links (resume and set-password)
+      # point here and at APP_URL respectively.
+      APPLY_URL: https://${APPLY_DOMAIN:-apply.os-funding.com}
+      # 32-byte key (base64) that encrypts applicants' EIN and SSN. Without it
+      # the application is switched off. Back it up: lose it and the stored
+      # numbers can't be read.
+      APPLICATION_DATA_KEY: ${APPLICATION_DATA_KEY:-}
       SKIP_VIRUS_SCAN: ${SKIP_VIRUS_SCAN:-true}
     volumes:
       - ./secrets/jwt_private.pem:/run/secrets/jwt_private.pem:ro
@@ -228,6 +235,7 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN}
+      APPLY_DOMAIN: ${APPLY_DOMAIN:-apply.os-funding.com}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

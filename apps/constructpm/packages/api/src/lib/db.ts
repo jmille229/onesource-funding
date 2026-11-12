@@ -111,3 +111,30 @@ export async function withTransaction<T>(
     client.release();
   }
 }
+
+/**
+ * A transaction scoped to one funding application (V013).
+ *
+ * Applicants have no tenant. The API resolves their resume token to an
+ * application id, and this sets app.application_id so the application RLS
+ * policies show that one application and nothing else.
+ */
+export async function withApplication<T>(
+  applicationId: string,
+  fn: (client: pg.PoolClient) => Promise<T>
+): Promise<T> {
+  if (!isUuid(applicationId)) throw new Error('Invalid applicationId: not a valid UUID');
+  const client = await writePool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT set_config($1, $2, true)', ['app.application_id', applicationId]);
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}

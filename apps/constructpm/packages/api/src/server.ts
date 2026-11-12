@@ -17,6 +17,7 @@ import {
 } from './middleware/index.js';
 
 import { authRouter }          from './modules/auth/auth.router.js';
+import { applyRouter }         from './modules/apply/apply.router.js';
 import { jobsRouter }          from './modules/jobs/jobs.router.js';
 import { tasksRouter }         from './modules/tasks/tasks.router.js';
 import { budgetRouter }        from './modules/budget/budget.router.js';
@@ -91,6 +92,8 @@ app.get('/health/ready', async (_req, res) => {
 
 // ─── Public routes ────────────────────────────────────────────────────────────
 app.use('/api/auth', authRouter);
+// Funding applications: no account. Scoped by resume token, not by tenant.
+app.use('/api/apply', applyRouter);
 
 // ─── Operator console ─────────────────────────────────────────────────────────
 // Mounted before the tenant guard: operator tokens carry a different audience
