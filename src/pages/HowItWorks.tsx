@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   ClipboardCheck, Send, DollarSign, Check, X, ArrowRight, Shield,
@@ -7,6 +6,7 @@ import TopBar from "@/components/TopBar";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { usePageMeta } from "@/lib/usePageMeta";
+import { APPLY_URL } from "@/lib/links";
 
 /**
  * /how-it-works
@@ -205,8 +205,8 @@ const HowItWorks = () => {
               Start with the application. It takes a few documents, and no access to
               anything you would rather keep to yourself.
             </p>
-            <Link
-              to="/#get-started"
+            <a
+              href={APPLY_URL}
               className="btn-accent text-base px-7 py-3.5 group focus-visible:outline-none
                          focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2
                          focus-visible:ring-offset-primary"
@@ -216,7 +216,7 @@ const HowItWorks = () => {
                 className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-0.5"
                 aria-hidden="true"
               />
-            </Link>
+            </a>
           </div>
         </section>
       </main>

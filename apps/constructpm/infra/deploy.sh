@@ -23,7 +23,14 @@ if [ "$(id -u)" = "0" ] && [ -f secrets/jwt_private.pem ]; then
 fi
 
 echo "▶ pulling images"
-$COMPOSE pull --quiet postgres redis minio api web migrate caddy
+# Our own images change with every release: these must pull, or the deploy stops.
+$COMPOSE pull --quiet api web migrate
+# Third-party images are pinned and already on the server, so refreshing them is
+# best-effort. An upstream registry going away must not block shipping our own
+# code — MinIO stopped publishing its image publicly, and that one failed pull
+# aborted the whole deploy before any of it ran.
+$COMPOSE pull --quiet --ignore-pull-failures postgres redis minio caddy \
+  || echo "  (some third-party images couldn't be refreshed; the copies on this server are used)"
 
 echo "▶ applying migrations"
 # `run --rm` runs the one-shot to completion and returns its exit code, starting

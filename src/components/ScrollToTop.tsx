@@ -8,8 +8,8 @@ import { useLocation } from "react-router-dom";
  * clicking "How it works" from the footer lands you on the new page already
  * scrolled to the bottom — looking, reasonably, like a broken page.
  *
- * Also resolves hash links across routes. "Apply Now" on /how-it-works points at
- * /#get-started, which changes route *and* wants an anchor; the browser only
+ * Also resolves hash links across routes. A link to /#get-started (the
+ * consultation form) from another page changes route *and* wants an anchor; the browser only
  * handles the anchor when the target is already in the document, which it isn't
  * until the home route has rendered.
  */

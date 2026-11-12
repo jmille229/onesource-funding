@@ -5,6 +5,7 @@ import TopBar from "@/components/TopBar";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { CONTACT } from "@/lib/contact";
+import { APPLY_URL } from "@/lib/links";
 import { usePageMeta } from "@/lib/usePageMeta";
 
 /**
@@ -70,15 +71,15 @@ const ContentPage = ({ eyebrow, heading, lede, byline, meta, children }: Content
               talk it through. No pressure, no obligation.
             </p>
             <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 justify-center">
-              <Link
-                to="/#get-started"
+              <a
+                href={APPLY_URL}
                 className="btn-accent text-base px-7 py-3.5 group focus-visible:outline-none
                            focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2
                            focus-visible:ring-offset-primary"
               >
                 Apply Now
                 <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-              </Link>
+              </a>
               <a
                 href={`tel:${CONTACT.phoneTel}`}
                 className="btn-outline-light text-base px-7 py-3.5 focus-visible:outline-none
@@ -136,8 +137,13 @@ export const Callout = ({ title, children }: { title?: string; children: ReactNo
 );
 
 /** Internal link styled for running text. */
-export const TextLink = ({ to, children }: { to: string; children: ReactNode }) => (
-  <Link to={to} className="text-accent font-semibold underline underline-offset-2 decoration-accent/40 hover:decoration-accent">
-    {children}
-  </Link>
-);
+const TEXT_LINK_CLASS =
+  "text-accent font-semibold underline underline-offset-2 decoration-accent/40 hover:decoration-accent";
+
+/** An in-text link: a route on this site, or a full URL to another One Source site. */
+export const TextLink = ({ to, children }: { to: string; children: ReactNode }) =>
+  /^https?:\/\//.test(to) ? (
+    <a href={to} className={TEXT_LINK_CLASS}>{children}</a>
+  ) : (
+    <Link to={to} className={TEXT_LINK_CLASS}>{children}</Link>
+  );
