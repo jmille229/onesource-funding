@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import { Shield, ArrowRight } from "lucide-react";
 import heroPhone from "@/assets/hero-phone.png";
+import { APPLY_URL } from "@/lib/links";
 
 /**
  * The homepage hero — one hero, not two.
@@ -72,7 +73,7 @@ const HeroSection = () => {
 
             <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4">
               <a
-                href="#get-started"
+                href={APPLY_URL}
                 className="btn-accent text-base px-7 py-3.5 group focus-visible:outline-none
                            focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2
                            focus-visible:ring-offset-primary"

@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { APPLY_URL } from "@/lib/links";
 
 const CtaBanner = () => (
   <section className="bg-hero">
@@ -16,8 +17,8 @@ const CtaBanner = () => (
         <h2 className="text-3xl md:text-4xl lg:text-5xl font-display font-bold text-primary-foreground mb-8">
           Start Getting Paid Immediately
         </h2>
-        <a href="#get-started" className="btn-accent text-lg px-10 py-4">
-          Get Started
+        <a href={APPLY_URL} className="btn-accent text-lg px-10 py-4">
+          Apply Now
         </a>
       </motion.div>
     </div>

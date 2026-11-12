@@ -8,6 +8,8 @@ import TopBar from "@/components/TopBar";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { usePageMeta } from "@/lib/usePageMeta";
+// The app deploys separately on its own subdomain; see lib/links.
+import { APP_URL } from "@/lib/links";
 
 /**
  * /software — the second front door.
@@ -31,9 +33,6 @@ import { usePageMeta } from "@/lib/usePageMeta";
  * later piece of work.
  */
 
-// The app deploys separately on its own subdomain; override per env with
-// VITE_APP_URL. Same convention as Navbar.
-const APP_URL = (import.meta.env.VITE_APP_URL as string | undefined) ?? "https://app.os-funding.com";
 
 const FEATURES = [
   {

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import ContentPage, { H2, P, TextLink } from "@/components/ContentPage";
 import { CONTACT } from "@/lib/contact";
+import { APPLY_URL } from "@/lib/links";
 
 /**
  * /faq — the homepage "Funding FAQ" card's Read More, and the Resources → FAQs
@@ -76,9 +77,14 @@ const SECTIONS: Array<{ title: string; items: QA[] }> = [
         q: "What do I need to apply?",
         a: (
           <>
-            A signed application, your business formation documents, a copy of the
-            invoice you want funded, and the contract or purchase order behind it.
-            That&rsquo;s it. <TextLink to="/how-it-works">See how it works</TextLink>.
+            The online application takes about 15 minutes, and you can save it and
+            finish later. Along with some details about your business and the agencies
+            you bill, you&rsquo;ll provide your Articles of Incorporation, a completed
+            W-9, your EIN, the authorized signer&rsquo;s driver&rsquo;s license, the
+            owner&rsquo;s Social Security number, a payment directive form and a
+            notarized corporate resolution. Once you&rsquo;re approved, you send each
+            invoice with the agency&rsquo;s approval. <TextLink to={APPLY_URL}>Start your
+            application</TextLink> or <TextLink to="/how-it-works">see how it works</TextLink>.
           </>
         ),
       },

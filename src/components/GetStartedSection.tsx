@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
+import { APPLY_URL } from "@/lib/links";
 
 const services = [
   {
@@ -138,7 +139,16 @@ const GetStartedSection = () => {
             transition={{ duration: 0.6 }}
           >
             <h2 className="text-3xl md:text-4xl font-display font-bold mb-2">Get Started</h2>
-            <p className="text-dark-section-foreground/70 mb-8">Complete the form for a Free Consultation.</p>
+            <p className="text-dark-section-foreground/70 mb-2">
+              Ready to go?{" "}
+              <a href={APPLY_URL} className="font-semibold text-accent underline underline-offset-2 hover:no-underline">
+                Apply online
+              </a>{" "}
+              — it takes about 15 minutes.
+            </p>
+            <p className="text-dark-section-foreground/70 mb-8">
+              Prefer to talk first? Complete the form for a free consultation.
+            </p>
             <form className="space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
               {/* Honeypot — visually and semantically hidden, off the tab order,
                   and told to browsers not to autofill. A human never touches it;

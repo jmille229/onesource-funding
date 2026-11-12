@@ -2,9 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Menu, X, ChevronDown } from "lucide-react";
 
-// The customer portal (the invoice/subledger app) deploys separately on its own
-// subdomain. Override per environment with VITE_APP_URL.
-const APP_URL = (import.meta.env.VITE_APP_URL as string | undefined) ?? "https://app.os-funding.com";
+import { APP_URL, APPLY_URL } from "@/lib/links";
 
 const navItems = [
   {
@@ -109,12 +107,9 @@ const Navbar = () => {
           >
             Log in
           </a>
-          {/* "/#get-started", not "#get-started": the form only exists on the
-              homepage, so a bare hash is a dead link on every other page.
-              ScrollToTop handles the cross-route scroll. */}
-          <Link to="/#get-started" className="btn-accent text-sm">
+          <a href={APPLY_URL} className="btn-accent text-sm">
             Apply Now
-          </Link>
+          </a>
         </div>
 
         {/* Mobile toggle */}
@@ -163,13 +158,13 @@ const Navbar = () => {
             >
               Log in
             </a>
-            <Link
-              to="/#get-started"
+            <a
+              href={APPLY_URL}
               onClick={() => setMobileOpen(false)}
               className="btn-accent w-full text-center text-sm mt-2"
             >
               Apply Now
-            </Link>
+            </a>
           </div>
         </div>
       )}
