@@ -76,6 +76,8 @@ const ENTITY_TYPES = new Set([
   // Factoring: the client uploads against the invoice id as a draft, and the
   // request handler re-keys the row to the funding_request once it exists.
   'funding_request_draft', 'funding_request',
+  // Documents from an approved funding application (V013). Read-only to tenants.
+  'onboarding',
 ]);
 
 function assertEntityRef(entity_type: unknown, entity_id: unknown): { entity_type: string; entity_id: string } {
@@ -240,7 +242,7 @@ filesRouter.post(
             // A funding request's documents are fixed when it is submitted (copied
             // from the invoice). Adding to one afterwards would let proof appear
             // after underwriting started, so tenants can't upload to it directly.
-            if (entity_type === 'funding_request') {
+            if (entity_type === 'funding_request' || entity_type === 'onboarding') {
               throw Object.assign(
                 new Error('Attach documents to the invoice; they are included when you request funding'),
                 { status: 422 });
@@ -414,7 +416,7 @@ filesRouter.delete(
     // Documents submitted with a funding request are part of its record.
     const result = await db.query(
       `DELETE FROM file_attachments
-        WHERE id = $1 AND company_id = $2 AND entity_type <> 'funding_request' RETURNING *`,
+        WHERE id = $1 AND company_id = $2 AND entity_type NOT IN ('funding_request', 'onboarding') RETURNING *`,
       [req.params['id'], req.auth.companyId]
     );
 

@@ -121,6 +121,60 @@ authRouter.post(
   })
 );
 
+// ─── Invites (accounts One Source creates on approving an application) ────────
+// The invite token arrives in the URL fragment of the emailed link, so the
+// browser posts it here rather than it appearing in any request URL.
+const inviteHash = (t: string) => createHash('sha256').update(t).digest('hex');
+
+// POST /api/auth/invite/info — who an invite is for, to greet them by name.
+authRouter.post(
+  '/invite/info',
+  authRateLimit,
+  validate(z.object({ token: z.string().min(20).max(200) })),
+  asyncHandler(async (req, res) => {
+    const r = await readPool.query(`SELECT * FROM auth_invite_info($1)`,
+      [inviteHash((req.body as { token: string }).token)]);
+    if (!r.rows[0]) {
+      res.status(404).json({ error: 'invalid_invite', message: 'This link has expired or was already used.' });
+      return;
+    }
+    res.json({ data: r.rows[0] });
+  })
+);
+
+// POST /api/auth/invite/accept — set a password with the invite, and sign in.
+authRouter.post(
+  '/invite/accept',
+  authRateLimit,
+  validate(z.object({
+    token: z.string().min(20).max(200),
+    password: z.string().min(10, 'Use at least 10 characters').max(128),
+  })),
+  asyncHandler(async (req, res) => {
+    const b = req.body as { token: string; password: string };
+    const hash = await argon2.hash(b.password, ARGON2_OPTS);
+    const r = await writePool.query(`SELECT * FROM auth_accept_invite($1, $2)`, [inviteHash(b.token), hash]);
+    const user = r.rows[0] as
+      | { id: string; company_id: string; email: string; first_name: string; last_name: string; role: UserRole }
+      | undefined;
+    if (!user) {
+      res.status(404).json({ error: 'invalid_invite', message: 'This link has expired or was already used.' });
+      return;
+    }
+    const accessToken = await issueSession(res, user);
+    logger.info({ user_id: user.id }, 'Invite accepted');
+    res.json({
+      data: {
+        access_token: accessToken, token_type: 'Bearer', expires_in: 900,
+        user: {
+          id: user.id, email: user.email, first_name: user.first_name, last_name: user.last_name,
+          role: user.role, company_id: user.company_id,
+        },
+      },
+    });
+  })
+);
+
 // POST /api/auth/refresh
 // Rate limited per IP: each call is a database read and up to two writes, and
 // nothing else on this route needs a credential to reach the database. Looser

@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, AlertTriangle, PiggyBank, Clock, FolderKanban, Send } from 'lucide-react';
+import { Banknote, AlertTriangle, PiggyBank, Clock, FolderKanban, Send, FileText, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, apiError, formatCurrency, formatDate } from '../../lib/api';
 import { factoredInvoiceRef } from '@constructpm/shared';
 import { FundingOnboardingForm } from '../../components/FundingOnboardingForm';
-import { FUNDING_BADGE, FUNDING_LABEL } from '../../lib/invoices';
+import { FUNDING_BADGE, FUNDING_LABEL, downloadAttachment } from '../../lib/invoices';
+import { usePortalMode } from '../../components/layout/AppLayout';
+import { ReadyToRequest, SubmitFundingInvoice } from '../../components/SubmitFundingInvoice';
 
 const STATUS_BADGE: Record<string, string> = {
   pending: 'badge-gray',
@@ -99,6 +101,8 @@ function RecourseCell({ days }: { days: number | null }) {
 
 export function FactoringPage() {
   const [scope, setScope] = useState('outstanding');
+  const [submitting, setSubmitting] = useState(false);
+  const fundingOnly = usePortalMode() === 'funding';
 
   const { data: summary, isLoading: loadingSummary } = useQuery({
     queryKey: ['factoring-summary'],
@@ -160,7 +164,14 @@ export function FactoringPage() {
             Invoices funded by One Source
           </p>
         </div>
+        {fundingOnly && !submitting && (
+          <button className="btn-primary" onClick={() => setSubmitting(true)}>
+            <Plus className="w-4 h-4" /> Submit an invoice for funding
+          </button>
+        )}
       </div>
+
+      {submitting && <SubmitFundingInvoice onClose={() => setSubmitting(false)} />}
 
       {/* The funding limit sits above the position, because it is the number that
           answers "can I fund the invoice on my desk right now?" — and the one
@@ -223,7 +234,7 @@ export function FactoringPage() {
         </div>
       )}
 
-      <FundingRequests />
+      <FundingRequests fundingOnly={fundingOnly} onSubmitNew={() => setSubmitting(true)} />
 
       <h2 className="text-base font-semibold text-slate-900 mb-3">Funded invoices</h2>
       <div className="filter-bar">
@@ -245,7 +256,7 @@ export function FactoringPage() {
             <tr>
               <th className="table-header">Invoice</th>
               <th className="table-header">Customer</th>
-              <th className="table-header">Job</th>
+              <th className="table-header">{fundingOnly ? 'Contract' : 'Job'}</th>
               <th className="table-header text-right">Face</th>
               <th className="table-header text-right">Advanced</th>
               <th className="table-header text-right">Reserve</th>
@@ -272,7 +283,9 @@ export function FactoringPage() {
                 <td className="table-cell font-medium font-mono">{factoredInvoiceRef(a)}</td>
                 <td className="table-cell">{a.debtor_name}</td>
                 <td className="table-cell">
-                  {a.job_id ? (
+                  {a.job_id && fundingOnly ? (
+                    <span className="text-slate-600">{a.job_number ?? a.job_name}</span>
+                  ) : a.job_id ? (
                     <Link to={`/jobs/${a.job_id}`} className="text-brand-600 hover:underline inline-flex items-center gap-1">
                       <FolderKanban className="w-3.5 h-3.5" />
                       {a.job_number ?? a.job_name}
@@ -308,7 +321,43 @@ export function FactoringPage() {
         Net expected is your reserve less fees accrued to date, and updates daily while an
         invoice is outstanding. Final figures are confirmed when the customer pays.
       </p>
+
+      <OnboardingDocuments />
     </div>
+  );
+}
+
+/** What the client provided when they applied, kept with their account. */
+function OnboardingDocuments() {
+  const { data } = useQuery({
+    queryKey: ['onboarding-documents'],
+    queryFn: () => api.get('/factoring/onboarding-documents').then((r) => r.data.data as {
+      id: string; original_name: string; created_at: string;
+    }[]),
+  });
+  if (!data?.length) return null;
+  return (
+    <details className="card mt-8">
+      <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-700">
+        Your application documents ({data.length})
+      </summary>
+      <ul className="divide-y divide-slate-100 border-t border-slate-100">
+        {data.map((d) => (
+          <li key={d.id} className="flex items-center gap-3 px-4 py-2.5">
+            <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
+            <span className="text-sm text-slate-800 truncate flex-1 min-w-0">{d.original_name}</span>
+            <button className="btn-ghost btn-sm"
+                    onClick={() => void downloadAttachment(`/files/${d.id}/download`, d.original_name)
+                      .catch(() => toast.error('Download failed'))}>
+              Download
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="px-4 py-3 text-xs text-slate-500 border-t border-slate-100">
+        To update one of these, send the new version to One Source.
+      </p>
+    </details>
   );
 }
 
@@ -322,7 +371,7 @@ interface FundingRequestRow {
  * Requests not yet turned into an advance: what's waiting on One Source, and
  * what was declined and why. Funded ones move to the table below.
  */
-function FundingRequests() {
+function FundingRequests({ fundingOnly, onSubmitNew }: { fundingOnly: boolean; onSubmitNew: () => void }) {
   const qc = useQueryClient();
   const { data } = useQuery<FundingRequestRow[]>({
     queryKey: ['factoring-requests'],
@@ -346,16 +395,30 @@ function FundingRequests() {
     }
   };
 
+  // Invoices with a request in flight (or funded) aren't "ready to request".
+  const active = new Set((data ?? [])
+    .filter((r) => ['submitted', 'under_review', 'approved'].includes(r.status)).map((r) => r.invoice_id));
+
   return (
+    <>
+    {fundingOnly && data && <ReadyToRequest activeInvoiceIds={active} />}
     <section className="mb-8">
       <h2 className="text-base font-semibold text-slate-900 mb-3">Funding requests</h2>
       {rows.length === 0 ? (
         <div className="card p-5 text-sm text-slate-500 flex items-center gap-3">
           <Send className="w-5 h-5 text-slate-300 flex-shrink-0" />
-          <span>
-            Nothing waiting. To request funding, open an invoice the agency has approved on the{' '}
-            <Link to="/invoices" className="text-brand-600 hover:underline">Invoices</Link> page.
-          </span>
+          {fundingOnly ? (
+            <span>
+              Nothing waiting.{' '}
+              <button onClick={onSubmitNew} className="text-brand-600 hover:underline">Submit an invoice for funding</button>{' '}
+              once the agency has approved it.
+            </span>
+          ) : (
+            <span>
+              Nothing waiting. To request funding, open an invoice the agency has approved on the{' '}
+              <Link to="/invoices" className="text-brand-600 hover:underline">Invoices</Link> page.
+            </span>
+          )}
         </div>
       ) : (
         <div className="card overflow-x-auto">
@@ -395,5 +458,6 @@ function FundingRequests() {
         </div>
       )}
     </section>
+    </>
   );
 }

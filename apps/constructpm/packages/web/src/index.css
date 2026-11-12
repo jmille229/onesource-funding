@@ -17,6 +17,7 @@
   .btn-ghost { @apply btn text-slate-600 hover:bg-slate-100; }
   .btn-danger { @apply btn bg-red-600 text-white hover:bg-red-700; }
   .btn-sm { @apply px-2.5 py-1.5 text-xs; }
+  .btn-os { @apply btn bg-os-navy text-white hover:bg-os-navy-dark focus-visible:outline-os-navy; }
   .input { @apply block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder-slate-400 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:bg-slate-50 disabled:text-slate-500; }
   .label { @apply block text-sm font-medium text-slate-700 mb-1; }
   .card { @apply bg-white rounded-lg border border-slate-200 shadow-sm; }
@@ -49,6 +50,9 @@
   /* Filter/search rows: full width and wrapping on phones. */
   .filter-bar { @apply flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center mb-4; }
 }
+
+/* One Source–branded screens: navy focus ring instead of the ConstructPM blue. */
+.os-brand .input:focus { border-color: #193557; --tw-ring-color: #193557; }
 
 /* ─── Touch-device affordances ──────────────────────────────────────────────
    Deliberately outside @layer so these win over the component definitions

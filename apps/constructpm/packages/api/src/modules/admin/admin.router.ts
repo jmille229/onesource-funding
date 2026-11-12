@@ -9,6 +9,7 @@ import { scoreRequest } from '../factoring/underwriting.service.js';
 import { parseDelimited, toAdvancePayload } from './import-map.js';
 import { parsePagination } from '../../lib/pagination.js';
 import { deliverAttachment } from '../../lib/storage.js';
+import { applicationsAdminRouter } from './applications.admin.js';
 import { APPROVAL_DOC_TYPES } from '@constructpm/shared';
 import {
   asyncHandler, validate, authenticatePlatform, authRateLimit,
@@ -69,6 +70,9 @@ adminRouter.post(
 
 // Everything below requires an operator token.
 adminRouter.use(authenticatePlatform);
+
+// Funding applications (apply.os-funding.com) and their requirements.
+adminRouter.use(applicationsAdminRouter);
 
 adminRouter.get('/me', asyncHandler(async (req, res) => {
   res.json({ data: req.platform });

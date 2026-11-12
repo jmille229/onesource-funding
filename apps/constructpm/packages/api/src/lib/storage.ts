@@ -1,6 +1,10 @@
 import path from 'path';
-import type { Response } from 'express';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { PassThrough } from 'stream';
+import type { Request, Response } from 'express';
+import busboy from 'busboy';
+import { fileTypeFromBuffer } from 'file-type';
+import { Upload } from '@aws-sdk/lib-storage';
+import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from './env.js';
 
@@ -96,4 +100,136 @@ export async function deliverAttachment(
   const body = object.Body as NodeJS.ReadableStream;
   body.on('error', () => { if (!res.headersSent) res.status(502).end(); else res.destroy(); });
   body.pipe(res);
+}
+
+// ─── Streaming single-file upload (shared) ───────────────────────────────────
+// The same approach as POST /api/files/upload (see files.router.ts): busboy,
+// the first 4 KB sniffed for the real file type, then streamed to S3 without
+// buffering the whole file. Used by the public funding application and the
+// operator's blank-form uploads, which need a stricter type list and their own
+// storage keys.
+
+export interface UploadOptions {
+  /** MIME types accepted, checked against both the declared and the detected type. */
+  allowedMime: ReadonlySet<string>;
+  maxBytes: number;
+  /**
+   * Called once the content has been checked, with the form fields sent before
+   * the file, to choose the object key. Throw (with a status) to reject.
+   */
+  keyFor: (fields: Record<string, string>, safeName: string) => Promise<string> | string;
+}
+
+export interface StoredUpload {
+  key: string;
+  safeName: string;
+  contentType: string;
+  size: number;
+  fields: Record<string, string>;
+}
+
+const MAX_CONCURRENT = 10;
+let inFlight = 0;
+
+export async function receiveFileUpload(req: Request, opts: UploadOptions): Promise<StoredUpload> {
+  if (inFlight >= MAX_CONCURRENT) {
+    throw Object.assign(new Error('Upload capacity reached. Please retry in a moment.'), { status: 503 });
+  }
+  inFlight++;
+  try {
+    return await new Promise<StoredUpload>((resolve, reject) => {
+      let aborted = false;
+      let sawFile = false;
+      let result: StoredUpload | null = null;
+      let finished = false;
+      const fields: Record<string, string> = {};
+      const done = () => { if (result && finished) resolve(result); };
+
+      req.on('aborted', () => {
+        aborted = true;
+        reject(Object.assign(new Error('Upload aborted by client'), { status: 400 }));
+      });
+
+      const bb = busboy({
+        headers: req.headers,
+        limits: { fileSize: opts.maxBytes, files: 1, fields: 6, fieldSize: 1024 },
+      });
+      bb.on('field', (name, value) => { fields[name] = value; });
+      bb.on('fieldsLimit', () => reject(Object.assign(new Error('Too many form fields'), { status: 422 })));
+      bb.on('filesLimit', () => reject(Object.assign(new Error('Only one file per request'), { status: 422 })));
+
+      bb.on('file', (_name, fileStream, info) => {
+        sawFile = true;
+        const claimed = info.mimeType?.split(';')[0]?.trim() ?? '';
+        if (!opts.allowedMime.has(claimed)) {
+          fileStream.resume();
+          reject(Object.assign(new Error('That file type isn’t accepted. Upload a PDF or a photo (JPG, PNG).'), { status: 415 }));
+          return;
+        }
+        const head: Buffer[] = [];
+        let headBytes = 0;
+        let size = 0;
+        const out = new PassThrough();
+
+        fileStream.on('data', (chunk: Buffer) => {
+          size += chunk.length;
+          if (headBytes < 4096) { head.push(chunk); headBytes += chunk.length; }
+          if (!aborted) out.write(chunk);
+        });
+        fileStream.on('limit', () => {
+          aborted = true;
+          out.destroy(new Error('too large'));
+          reject(Object.assign(
+            new Error(`That file is larger than ${Math.round(opts.maxBytes / 1048576)} MB`), { status: 413 }));
+        });
+        fileStream.on('end', () => { if (!aborted) out.end(); });
+        fileStream.on('error', (err) => { out.destroy(err); reject(err); });
+
+        (async () => {
+          await new Promise<void>((r) => {
+            const check = () => (headBytes >= 4096 || fileStream.readableEnded ? r() : setTimeout(check, 5));
+            check();
+          });
+          const detected = await fileTypeFromBuffer(Buffer.concat(head));
+          if (!detected || !opts.allowedMime.has(detected.mime)
+              || detected.mime.split('/')[0] !== claimed.split('/')[0]) {
+            throw Object.assign(
+              new Error('The file’s contents don’t match an accepted type. Upload a PDF or a photo (JPG, PNG).'),
+              { status: 415 });
+          }
+          const safeName = sanitizeFilename(info.filename || 'upload');
+          const key = await opts.keyFor(fields, safeName);
+          await new Upload({
+            client: s3,
+            params: {
+              Bucket: env.S3_BUCKET_FILES, Key: key, Body: out, ContentType: detected.mime,
+              ServerSideEncryption: env.NODE_ENV === 'production' ? 'AES256' : undefined,
+            },
+            queueSize: 4,
+            partSize: 5 * 1024 * 1024,
+          }).done();
+          result = { key, safeName, contentType: detected.mime, size, fields: { ...fields } };
+          done();
+        })().catch((err) => { aborted = true; out.destroy(); reject(err); });
+      });
+
+      bb.on('finish', () => {
+        if (!sawFile) {
+          reject(Object.assign(new Error('No file was included'), { status: 422 }));
+          return;
+        }
+        finished = true;
+        done();
+      });
+      bb.on('error', reject);
+      req.pipe(bb);
+    });
+  } finally {
+    inFlight--;
+  }
+}
+
+/** Remove a stored object; best-effort (used to clean up after a failed save). */
+export async function deleteObject(key: string): Promise<void> {
+  await s3.send(new DeleteObjectCommand({ Bucket: env.S3_BUCKET_FILES, Key: key })).catch(() => {});
 }

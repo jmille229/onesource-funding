@@ -455,3 +455,52 @@ export interface SubcontractParticipation {
   participation_pct: number;
   by_certification: { certification: string; committed: number }[];
 }
+
+// ─── Funding applications (apply.os-funding.com) ──────────────────────────────
+
+export type ApplicationStatus =
+  | 'draft' | 'submitted' | 'in_review' | 'docs_requested' | 'approved' | 'declined' | 'withdrawn';
+
+export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
+  draft: 'In progress',
+  submitted: 'Submitted',
+  in_review: 'In review',
+  docs_requested: 'More documents needed',
+  approved: 'Approved',
+  declined: 'Declined',
+  withdrawn: 'Withdrawn',
+};
+
+export type ApplicationItemKind = 'document' | 'ein' | 'ssn';
+
+/**
+ * What the applicant agrees to by signing. Versioned: the version is stored
+ * with each signature, so changing the words means bumping the version.
+ * Have counsel approve any change.
+ */
+export const APPLICATION_CONSENT_VERSION = '2026-11-v1';
+export const APPLICATION_CONSENT_TEXT =
+  'I certify that the information in this application and the documents I have provided are true, ' +
+  'complete and accurate, and that I am authorized to apply on behalf of the business. I authorize ' +
+  'One Source Funding to verify this information and to obtain business and personal credit reports, ' +
+  'and to search public records (including UCC filings, tax liens, judgments and lawsuits) for the ' +
+  'business and its owners, in connection with evaluating this application and any resulting ' +
+  'funding relationship. I understand that submitting this application does not commit either party ' +
+  'to a funding agreement.';
+
+/** Application fields the applicant must fill before submitting. */
+export const APPLICATION_REQUIRED_FIELDS = [
+  ['contact_first_name', 'Your first name'],
+  ['contact_last_name', 'Your last name'],
+  ['contact_email', 'Your email'],
+  ['contact_phone', 'Your phone number'],
+  ['legal_name', 'Legal business name'],
+  ['entity_type', 'Type of business'],
+  ['address_line1', 'Business address'],
+  ['city', 'City'],
+  ['state_code', 'State'],
+  ['zip', 'ZIP code'],
+  ['agencies', 'Agencies you bill'],
+  ['owner_name', 'Owner\u2019s name'],
+  ['signer_name', 'Authorized signer'],
+] as const;

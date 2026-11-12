@@ -1,11 +1,33 @@
 import { useEffect, useRef, useState } from 'react';
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, Navigate, useLocation } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   LayoutDashboard, FolderKanban, FileText, Users, BarChart3,
-  LogOut, HardHat, Menu, X, Banknote,
+  LogOut, HardHat, Menu, X, Banknote, LayoutGrid,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuthStore } from '../../stores/auth.store';
+import { api, apiError } from '../../lib/api';
+import logo from '../../assets/onesource-logo.png';
 import { clsx } from 'clsx';
+
+/**
+ * 'funding' — a client onboarded through apply.os-funding.com, who came for
+ * funding and not the project tools: they see Funding only, branded One
+ * Source. 'full' is everyone else. null while it loads.
+ */
+export function usePortalMode(): 'funding' | 'full' | null {
+  const user = useAuthStore((s) => s.user);
+  const { data, isError } = useQuery({
+    queryKey: ['company-settings', user?.company_id],
+    queryFn: () => api.get('/settings/company').then((r) => r.data.data as { settings?: { portal_mode?: string } }),
+    enabled: Boolean(user),
+    staleTime: 5 * 60_000,
+  });
+  if (isError) return 'full';
+  if (!data) return null;
+  return data.settings?.portal_mode === 'funding' ? 'funding' : 'full';
+}
 
 const nav = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -19,21 +41,67 @@ const nav = [
     roles: ['owner', 'admin', 'accountant'] },
 ];
 
+const fundingNav = nav.filter((n) => n.to === '/funding');
+
+/** One Source's logo on a white tile, so it reads on the dark sidebar. */
+function OneSourceMark({ compact }: { compact?: boolean }) {
+  return (
+    <span className={clsx('inline-flex items-center rounded-md bg-white', compact ? 'px-1.5 py-1' : 'px-2 py-1.5')}>
+      <img src={logo} alt="One Source Funding" className={compact ? 'h-6 w-auto' : 'h-8 w-auto'} />
+    </span>
+  );
+}
+
+/** Funding-only clients can switch the project and invoice tools on themselves. */
+function TurnOnTools() {
+  const user = useAuthStore((s) => s.user);
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  if (!['owner', 'admin'].includes(user?.role ?? '')) return null;
+  const turnOn = async () => {
+    if (!window.confirm('Turn on jobs, invoices, contacts and reports for your team? You can keep using Funding exactly as you do now.')) return;
+    setBusy(true);
+    try {
+      await api.patch('/settings/company', { settings: { portal_mode: 'full' } });
+      await qc.invalidateQueries({ queryKey: ['company-settings'] });
+      toast.success('Project and invoice tools are on');
+    } catch (e) {
+      toast.error(apiError(e, 'Couldn’t turn them on'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mx-3 mb-3 rounded-md border border-slate-700 p-3">
+      <p className="text-xs text-slate-300">Want to track jobs and invoices here too?</p>
+      <button onClick={() => void turnOn()} disabled={busy}
+              className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-white hover:underline disabled:opacity-50">
+        <LayoutGrid className="w-3.5 h-3.5" /> Turn on project &amp; invoice tools
+      </button>
+    </div>
+  );
+}
+
 /** Sidebar contents — identical in the fixed desktop rail and the mobile drawer. */
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarContent({ onNavigate, mode }: { onNavigate?: () => void; mode: 'funding' | 'full' | null }) {
   const { user, logout } = useAuthStore();
+  const items = mode === 'funding' ? fundingNav : nav;
 
   return (
     <>
       <div className="flex items-center gap-2.5 px-5 h-16 border-b border-slate-700 flex-shrink-0">
-        <div className="w-8 h-8 rounded bg-brand-600 flex items-center justify-center flex-shrink-0">
-          <HardHat className="w-5 h-5 text-white" />
-        </div>
-        <span className="font-bold text-base tracking-tight">ConstructPM</span>
+        {mode === 'funding' ? <OneSourceMark /> : (
+          <>
+            <div className="w-8 h-8 rounded bg-brand-600 flex items-center justify-center flex-shrink-0">
+              <HardHat className="w-5 h-5 text-white" />
+            </div>
+            <span className="font-bold text-base tracking-tight">ConstructPM</span>
+          </>
+        )}
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        {nav
+        {mode !== null && items
           .filter((item) => !item.roles || (user?.role && item.roles.includes(user.role)))
           .map(({ to, icon: Icon, label }) => (
           <NavLink
@@ -53,6 +121,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </NavLink>
         ))}
       </nav>
+
+      {mode === 'funding' && <TurnOnTools />}
 
       <div className="px-3 py-4 border-t border-slate-700 flex-shrink-0">
         <div className="flex items-center gap-3 px-3 py-2 rounded-md">
@@ -87,6 +157,7 @@ export function AppLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
   const closeRef = useRef<HTMLButtonElement>(null);
+  const mode = usePortalMode();
 
   // Close on navigation so tapping a link doesn't leave the drawer over the page.
   useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
@@ -112,7 +183,7 @@ export function AppLayout() {
       {/* Desktop rail — only from lg up. Below that it ate 240px of a 390px
           screen, which is what made every list page unreadable. */}
       <aside className="hidden lg:flex w-60 flex-col bg-slate-900 text-white flex-shrink-0">
-        <SidebarContent />
+        <SidebarContent mode={mode} />
       </aside>
 
       {/* Mobile drawer */}
@@ -138,7 +209,7 @@ export function AppLayout() {
             >
               <X className="w-5 h-5" />
             </button>
-            <SidebarContent onNavigate={() => setDrawerOpen(false)} />
+            <SidebarContent mode={mode} onNavigate={() => setDrawerOpen(false)} />
           </aside>
         </div>
       )}
@@ -155,16 +226,23 @@ export function AppLayout() {
           >
             <Menu className="w-5 h-5" />
           </button>
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded bg-brand-600 flex items-center justify-center">
-              <HardHat className="w-4 h-4 text-white" />
+          {mode === 'funding' ? <OneSourceMark compact /> : (
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded bg-brand-600 flex items-center justify-center">
+                <HardHat className="w-4 h-4 text-white" />
+              </div>
+              <span className="font-bold text-sm tracking-tight">ConstructPM</span>
             </div>
-            <span className="font-bold text-sm tracking-tight">ConstructPM</span>
-          </div>
+          )}
         </header>
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden">
-          <Outlet />
+          {/* Funding-only: every other screen leads back to Funding. */}
+          {mode === null
+            ? <div className="p-10 flex justify-center"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-slate-400" /></div>
+            : mode === 'funding' && !location.pathname.startsWith('/funding')
+              ? <Navigate to="/funding" replace />
+              : <Outlet />}
         </main>
       </div>
     </div>

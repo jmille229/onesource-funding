@@ -99,6 +99,17 @@ const envSchema = z.object({
   // token can never be replayed against an admin route (and vice versa).
   JWT_ADMIN_AUDIENCE: z.string().default('constructpm-admin'),
 
+  // ─── Funding applications (apply.os-funding.com) ───────────────────────────
+  // 32-byte key, base64, that encrypts EIN/SSN values before they are stored.
+  // Generate: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+  // Unset: the public application is switched off (it returns 503), nothing
+  // else is affected. Losing it makes stored numbers unreadable, so back it up.
+  APPLICATION_DATA_KEY: z.string().optional().refine(
+    (v) => v === undefined || v === '' || Buffer.from(v, 'base64').length === 32,
+    'APPLICATION_DATA_KEY must be 32 bytes, base64-encoded'),
+  // Public address of the application, for resume links in email.
+  APPLY_URL: z.string().default('http://localhost:5173/apply'),
+
   // Feature flags
   SKIP_VIRUS_SCAN: zBool(false),
 

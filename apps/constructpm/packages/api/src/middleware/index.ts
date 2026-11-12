@@ -157,19 +157,44 @@ export function authRateLimit(req: Request, res: Response, next: NextFunction) {
     { error: 'too_many_requests', message: 'Too many login attempts. Try again in 1 minute.' });
 }
 
+// Public funding application (no login). Starting one creates a database row
+// and may send an email, so it is tight; working on one is looser.
+const applyStartLimiter  = makeRateLimiter({ points: 10,  duration: 3600, keyPrefix: 'rl:apply:start' });
+const applyLimiter       = makeRateLimiter({ points: 300, duration: 600,  keyPrefix: 'rl:apply' });
+const applyUploadLimiter = makeRateLimiter({ points: 60,  duration: 3600, keyPrefix: 'rl:apply:upload' });
+
+export function applyStartRateLimit(req: Request, res: Response, next: NextFunction) {
+  limit(applyStartLimiter, req.ip ?? 'unknown', res, next,
+    { error: 'too_many_requests', message: 'Too many applications started from this connection. Try again later.' });
+}
+
+export function applyRateLimit(req: Request, res: Response, next: NextFunction) {
+  limit(applyLimiter, req.ip ?? 'unknown', res, next,
+    { error: 'too_many_requests', message: 'Too many requests. Please slow down.' });
+}
+
+export function applyUploadRateLimit(req: Request, res: Response, next: NextFunction) {
+  limit(applyUploadLimiter, req.ip ?? 'unknown', res, next,
+    { error: 'too_many_requests', message: 'Too many uploads. Try again later.' });
+}
+
 export function refreshRateLimit(req: Request, res: Response, next: NextFunction) {
   limit(refreshLimiter, req.ip ?? 'unknown', res, next,
     { error: 'too_many_requests', message: 'Too many session refreshes. Try again shortly.' });
 }
 
 // ─── Request timeout ─────────────────────────────────────────────────────────
-export function requestDeadline(timeoutMs = 30_000) {
-  return (_req: Request, res: Response, next: NextFunction) => {
+export function requestDeadline(timeoutMs = 30_000, uploadTimeoutMs = 5 * 60_000) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    // File uploads get longer: a 25 MB phone photo over a slow mobile uplink
+    // takes well over 30 seconds, and timing it out mid-stream left the file
+    // stored while the browser was told it failed.
+    const ms = req.is('multipart/form-data') ? uploadTimeoutMs : timeoutMs;
     const timer = setTimeout(() => {
       if (!res.headersSent) {
         res.status(503).json({ error: 'timeout', message: 'Request timed out' });
       }
-    }, timeoutMs);
+    }, ms);
     res.on('finish', () => clearTimeout(timer));
     res.on('close', () => clearTimeout(timer));
     next();
