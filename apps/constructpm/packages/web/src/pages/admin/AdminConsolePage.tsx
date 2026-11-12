@@ -8,6 +8,7 @@ import { formatCurrency, formatDate } from '../../lib/api';
 import { factoredInvoiceRef } from '@constructpm/shared';
 import { UnderwritingQueue } from './UnderwritingQueue';
 import { ApplicationsPanel } from './ApplicationsPanel';
+import { ClientsPanel } from './ClientsPanel';
 
 // ─── Login ────────────────────────────────────────────────────────────────────
 function AdminLogin() {
@@ -443,13 +444,7 @@ export function AdminConsolePage() {
             <AdvancesTable onChanged={() => qc.invalidateQueries({ queryKey: ['admin-invoices'] })} />
           </>
         )}
-        {tab === 'Clients' && <SimpleTable
-          queryKey="admin-clients" url="/clients"
-          columns={[
-            ['company_name', 'Client'], ['status', 'Status'],
-            ['outstanding_count', 'Open'], ['advanced_outstanding', 'Advanced', 'money'],
-            ['credit_limit', 'Credit limit', 'money'],
-          ]} />}
+        {tab === 'Clients' && <ClientsPanel />}
         {/* Median DSO next to median open age is the slowdown, read directly:
             an agency that normally settles in 32 days holding 130-day-old paper
             is the thing to notice before it turns into a queue of declines. */}

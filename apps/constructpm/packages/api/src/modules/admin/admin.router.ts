@@ -10,6 +10,7 @@ import { parseDelimited, toAdvancePayload } from './import-map.js';
 import { parsePagination } from '../../lib/pagination.js';
 import { deliverAttachment } from '../../lib/storage.js';
 import { applicationsAdminRouter } from './applications.admin.js';
+import { clientsAdminRouter } from './clients.admin.js';
 import { APPROVAL_DOC_TYPES } from '@constructpm/shared';
 import {
   asyncHandler, validate, authenticatePlatform, authRateLimit,
@@ -73,6 +74,7 @@ adminRouter.use(authenticatePlatform);
 
 // Funding applications (apply.os-funding.com) and their requirements.
 adminRouter.use(applicationsAdminRouter);
+adminRouter.use(clientsAdminRouter);
 
 adminRouter.get('/me', asyncHandler(async (req, res) => {
   res.json({ data: req.platform });
@@ -86,6 +88,9 @@ adminRouter.get('/clients', asyncHandler(async (_req, res) => {
            fc.tax_lien_personal, fc.tax_lien_business, fc.judgement, fc.lawsuit,
            fc.existing_ucc, fc.ucc_is_prior_factor, fc.personal_guarantee,
            fc.uses_subs, fc.does_progress_billing, fc.negative_list, fc.negative_list_reason,
+           fc.notes, fs.name AS fee_schedule_name,
+           -- Who can sign in: how many logins, and how many haven't set a password.
+           MAX(l.total) AS login_count, MAX(l.pending) AS login_pending,
            COALESCE(SUM(fi.advance_amount) FILTER (WHERE fi.status='advanced'),0) AS advanced_outstanding,
            COUNT(fi.id) FILTER (WHERE fi.status='advanced') AS outstanding_count,
            -- The two counts the graduated limit is built from, so the console can
@@ -98,10 +103,14 @@ adminRouter.get('/clients', asyncHandler(async (_req, res) => {
                AND COALESCE(fi.collected_on, fi.closed_on) - fi.advanced_on > p.on_time_days) AS settled_late
       FROM factoring_clients fc
       JOIN companies c ON c.id = fc.company_id
+      LEFT JOIN fee_schedules fs ON fs.id = fc.default_fee_schedule_id
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE pending) AS pending
+          FROM admin_client_logins(fc.company_id)) l ON true
       CROSS JOIN LATERAL (
         SELECT on_time_days FROM underwriting_policy ORDER BY version DESC LIMIT 1) p
       LEFT JOIN factored_invoices fi ON fi.factoring_client_id = fc.id
-     GROUP BY fc.id, c.name, p.on_time_days
+     GROUP BY fc.id, c.name, fs.name, p.on_time_days
      ORDER BY c.name`);
   res.json({ data: r.rows });
 }));

@@ -10,6 +10,7 @@ import { decryptSecret, formatMasked } from '../../lib/secrets.js';
 import { deleteObject, deliverAttachment, receiveFileUpload } from '../../lib/storage.js';
 import { asyncHandler, validate } from '../../middleware/index.js';
 import { resumeLink } from '../apply/apply.router.js';
+import { emailInvite, INVITE_TTL_DAYS, inviteLink, newInviteToken } from './invites.js';
 
 /**
  * Operator side of funding applications (V013): the Applications queue,
@@ -20,11 +21,9 @@ import { resumeLink } from '../apply/apply.router.js';
  */
 export const applicationsAdminRouter = Router();
 
-const INVITE_TTL_DAYS = 14;
 const TOKEN_TTL_DAYS = 30;
 const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
 const newToken = () => randomBytes(32).toString('base64url');
-const inviteLink = (token: string) => `${env.APP_URL.replace(/\/+$/, '')}/accept-invite#token=${token}`;
 
 function pool(): pg.Pool {
   if (!adminPool) throw Object.assign(new Error('admin not configured'), { status: 503 });
@@ -282,20 +281,13 @@ applicationsAdminRouter.delete('/applications/:id/items/:itemId', asyncHandler(a
 // ─── Approval ─────────────────────────────────────────────────────────────────
 
 async function issueInvite(c: pg.PoolClient, userId: string): Promise<string> {
-  const token = newToken();
-  await c.query(`SELECT create_user_invite($1, $2, $3)`, [userId, hashToken(token), INVITE_TTL_DAYS]);
+  const { token, hash } = newInviteToken();
+  await c.query(`SELECT create_user_invite($1, $2, $3)`, [userId, hash, INVITE_TTL_DAYS]);
   return inviteLink(token);
 }
 
-function sendInvite(to: string, firstName: string, link: string) {
-  void notify({
-    to,
-    subject: 'Your One Source Funding account is ready',
-    text: `Hi ${firstName},\n\nWelcome to One Source Funding — your application is approved.\n\n`
-        + `Set your password here to sign in, submit invoices for funding and follow every advance:\n`
-        + `${link}\n\nThe link works once and expires in ${INVITE_TTL_DAYS} days.\n\nOne Source Funding`,
-  });
-}
+const sendInvite = (to: string, firstName: string, link: string) =>
+  emailInvite(to, firstName, link, 'Welcome to One Source Funding — your application is approved.');
 
 /**
  * Approve: create (or reuse) the client's company and login, make them an
