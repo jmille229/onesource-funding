@@ -21,6 +21,8 @@ export interface AdvanceRow {
   amount_received: string | null; payment_memo: string | null; reserve_released: string | null;
   days_outstanding: number | null; recourse_on: string | null; notes: string | null;
   direct_payment_reported: boolean;
+  /** V016: short payment by the agency, the reserve due back (reserve − fees − shortfall), and any balance the client owes. */
+  shortfall: string; net_reserve: string; client_owes: string;
 }
 
 const STATUS: Record<string, { label: string; badge: string }> = {
@@ -231,6 +233,11 @@ export function AdvancesTable({ companyId, hideClient = false }: { companyId?: s
                           {formatDate(r.closed_on)}
                           {r.reserve_released !== null && <span className="block text-[11px] text-slate-500">{formatCurrency(r.reserve_released)} to client</span>}
                         </>
+                      ) : r.status === 'collected' ? (
+                        <span className="text-[11px] text-slate-500">
+                          {formatCurrency(r.net_reserve)} due to client
+                          {num(r.client_owes) > 0 && <span className="block text-red-600">client owes {formatCurrency(r.client_owes)}</span>}
+                        </span>
                       ) : <span className="text-slate-300">—</span>}
                     </td>
                     <td className="table-cell">
@@ -254,9 +261,13 @@ export function AdvancesTable({ companyId, hideClient = false }: { companyId?: s
                   {acting?.id === r.id && (
                     <tr className="bg-slate-50">
                       <td colSpan={colCount + 1} className="px-4 py-3">
-                        {acting.kind === 'collect'
-                          ? <CollectForm row={r} onDone={() => { setActing(null); refresh(); }} onCancel={() => setActing(null)} />
-                          : <CloseForm row={r} onDone={() => { setActing(null); refresh(); }} onCancel={() => setActing(null)} />}
+                        {/* Pinned to the visible part of the table, so the buttons
+                            aren't off to the right when the table is wide. */}
+                        <div className="sticky left-4 w-[min(60rem,calc(100vw-6rem))]">
+                          {acting.kind === 'collect'
+                            ? <CollectForm row={r} onDone={() => { setActing(null); refresh(); }} onCancel={() => setActing(null)} />
+                            : <CloseForm row={r} onDone={() => { setActing(null); refresh(); }} onCancel={() => setActing(null)} />}
+                        </div>
                       </td>
                     </tr>
                   )}
@@ -329,28 +340,71 @@ function CollectForm({ row, onDone, onCancel }: { row: AdvanceRow; onDone: () =>
   );
 }
 
-/** Release the reserve to the client, net of fees. */
+/**
+ * Release the reserve to the client: the reserve less fees and less any short
+ * payment. A different amount needs a reason, which goes on the ledger.
+ */
 function CloseForm({ row, onDone, onCancel }: { row: AdvanceRow; onDone: () => void; onCancel: () => void }) {
   const [date, setDate] = useState(todayISO());
-  const net = Math.max(num(row.reserve_amount) - num(row.accrued_fee), 0);
+  const [override, setOverride] = useState(false);
+  const [amount, setAmount] = useState(String(num(row.net_reserve)));
+  const [reason, setReason] = useState('');
+  const net = num(row.net_reserve);
+  const shortfall = num(row.shortfall);
+  const owes = num(row.client_owes);
+  const amt = Number(amount.replace(/[$,\s]/g, ''));
   const save = useMutation({
-    mutationFn: () => adminApi.post(`/invoices/${row.id}/close`, { closed_on: date }),
+    mutationFn: () => adminApi.post(`/invoices/${row.id}/close`, {
+      closed_on: date,
+      ...(override ? { release_amount: amt, override_reason: reason.trim() } : {}),
+    }),
     onSuccess: () => { toast.success('Reserve released'); onDone(); },
     onError: (e) => toast.error(errMsg(e, 'Couldn’t release the reserve')),
   });
+  const invalid = override && (!Number.isFinite(amt) || amt < 0 || amt > num(row.reserve_amount) || reason.trim().length < 3);
   return (
-    <form className="flex flex-col md:flex-row md:items-end gap-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
-      <p className="text-sm text-slate-800 md:self-center">
-        Release <strong>{formatCurrency(net)}</strong> to the client — the {formatCurrency(row.reserve_amount)} reserve less {formatCurrency(row.accrued_fee)} fees.
-      </p>
-      <label className="text-xs text-slate-600">Released on
-        <input type="date" className="input mt-0.5" value={date} onChange={(e) => setDate(e.target.value)} required
-               min={day(row.collected_on) || undefined} max={todayISO()} />
-      </label>
-      <div className="flex gap-2">
-        <button className="btn-primary btn-sm" disabled={save.isPending}>{save.isPending && <Loader2 className="w-4 h-4 animate-spin" />} Release</button>
-        <button type="button" className="btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+    <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+      <div className="text-sm text-slate-800">
+        <p className="font-medium">Release the reserve</p>
+        <p className="tabular-nums text-slate-600 mt-0.5">
+          Reserve {formatCurrency(row.reserve_amount)} − fees {formatCurrency(row.accrued_fee)}
+          {shortfall > 0 && <> − <span className="text-orange-700">short payment {formatCurrency(shortfall)}</span></>}
+          {' '}= <strong className="text-slate-900">{formatCurrency(net)}</strong> to the client
+        </p>
+        {owes > 0 && (
+          <p className="text-red-700 mt-0.5">
+            Fees and the short payment exceed the reserve: the client owes One Source {formatCurrency(owes)}.
+          </p>
+        )}
       </div>
+      <div className="flex flex-col md:flex-row md:items-end gap-3">
+        <label className="text-xs text-slate-600">Released on
+          <input type="date" className="input mt-0.5" value={date} onChange={(e) => setDate(e.target.value)} required
+                 min={day(row.collected_on) || undefined} max={todayISO()} />
+        </label>
+        {override && (
+          <>
+            <label className="text-xs text-slate-600">Amount to release
+              <input className="input mt-0.5 w-40" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+            </label>
+            <label className="text-xs text-slate-600 flex-1 min-w-[14rem] max-w-md">Why a different amount? (recorded)
+              <input className="input mt-0.5" value={reason} onChange={(e) => setReason(e.target.value)} required minLength={3} maxLength={500}
+                     placeholder="e.g. Agency withheld for its own error; reissuing" />
+            </label>
+          </>
+        )}
+        <div className="flex gap-2">
+          <button className="btn-primary btn-sm" disabled={save.isPending || invalid}>
+            {save.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+            Release {formatCurrency(override && Number.isFinite(amt) ? amt : net)}
+          </button>
+          <button type="button" className="btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+      <button type="button" className="text-xs text-slate-500 hover:text-slate-800 hover:underline"
+              onClick={() => { setOverride((v) => !v); setAmount(String(net)); setReason(''); }}>
+        {override ? 'Release the calculated amount instead' : 'Release a different amount…'}
+      </button>
     </form>
   );
 }
@@ -377,7 +431,10 @@ function downloadCsv(rows: AdvanceRow[], clientName?: string) {
     ['Days outstanding', (r) => r.days_outstanding ?? ''],
     ['Recourse date', (r) => day(r.recourse_on)],
     ['Reserve released on', (r) => day(r.closed_on)],
+    ['Short payment', (r) => (num(r.shortfall) > 0 ? num(r.shortfall).toFixed(2) : '')],
     ['Reserve released amount', (r) => (r.reserve_released === null ? '' : num(r.reserve_released).toFixed(2))],
+    ['Reserve due to client', (r) => (r.status === 'collected' ? num(r.net_reserve).toFixed(2) : '')],
+    ['Client owes', (r) => (num(r.client_owes) > 0 && ['collected', 'closed'].includes(r.status) ? num(r.client_owes).toFixed(2) : '')],
     ['Status', (r) => STATUS[r.status]?.label ?? r.status],
     ['Client reports paid directly', (r) => (r.direct_payment_reported ? 'Yes' : '')],
     ['Notes', (r) => r.notes ?? ''],
