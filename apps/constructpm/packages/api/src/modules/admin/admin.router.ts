@@ -7,6 +7,7 @@ import { buildUpdateSet } from '../../lib/sql.js';
 import { isPlaceholderInvoiceNumber } from '../factoring/underwriting.js';
 import { scoreRequest } from '../factoring/underwriting.service.js';
 import { parseDelimited, toAdvancePayload } from './import-map.js';
+import { planImport, type PlanItem } from './import-plan.js';
 import { parsePagination } from '../../lib/pagination.js';
 import { deliverAttachment } from '../../lib/storage.js';
 import { applicationsAdminRouter } from './applications.admin.js';
@@ -568,6 +569,203 @@ adminRouter.post(
       return { ...r.rows[0], released: amount, client_owes: k.owes };
     });
     res.json({ data: row });
+  })
+);
+
+// ─── CSV import ───────────────────────────────────────────────────────────────
+// The importer speaks the OneSource workbook's Advance Book columns directly,
+// so the sheet the operator already maintains can be pasted in unchanged. The
+// column-to-payload mapping and every parser live in ./import-map; matching
+// rows to the book in ./import-match (pure, tested) and ./import-plan.
+//
+// It's an upsert: a row that matches an advance already in the book (same
+// client, same invoice # and advance date, small typos allowed) updates that
+// advance instead of adding a duplicate, so re-importing an updated workbook
+// is safe. A value in the sheet overwrites; a blank cell never erases.
+//
+// Nothing is written unless every row parses and matches unambiguously.
+// Importing financial data blind is how you end up reconciling a half-applied
+// batch by hand.
+
+interface ParsedRow { row: number; payload: import('./import-map.js').AdvanceRowPayload; }
+
+/** One row of the import, as the console shows it. */
+function previewItem(i: PlanItem) {
+  return {
+    row: i.row,
+    action: i.action,
+    client_name: i.client.name,
+    borrower: i.payload.borrower,
+    creditor: i.debtor.name,
+    new_agency: i.debtor.id === null,
+    invoice_number: i.payload.invoice_number,
+    face_amount: i.payload.face_amount,
+    advanced_on: i.payload.advanced_on,
+    will_settle: i.payload.collection !== null,
+    matches: i.existing ? { id: i.existing.id, invoice_number: i.existing.invoice_number, advanced_on: i.existing.advanced_on } : null,
+    changes: i.changes.map((ch) => ({ label: ch.label, from: ch.from, to: ch.to })),
+    warnings: i.warnings,
+  };
+}
+
+/** Bring an existing advance in line with its row in the sheet. */
+async function applyImportUpdate(c: import('pg').PoolClient, i: PlanItem, debtorId: string, platformUserId: string, ip: string | null) {
+  const e = i.existing!;
+  const p = i.payload;
+  const before = await c.query(`SELECT * FROM factored_invoices WHERE id = $1 FOR UPDATE`, [e.id]);
+  const fields = new Set(i.changes.map((ch) => ch.field));
+
+  // Amounts follow the advance rate this advance was funded at, never today's
+  // schedule: the funded terms are a snapshot.
+  const face = fields.has('face_amount') ? p.face_amount : e.face_amount;
+  const advance = Math.round(face * e.advance_rate_pct) / 100;
+  const reserve = Math.round((face - advance) * 100) / 100;
+  await c.query(
+    `UPDATE factored_invoices
+        SET invoice_number = $2, debtor_id = $3, debtor_name = $4, face_amount = $5, advance_amount = $6,
+            reserve_amount = $7, advanced_on = $8, notes = $9, updated_at = NOW()
+      WHERE id = $1`,
+    [e.id, fields.has('invoice_number') ? p.invoice_number : e.invoice_number,
+     debtorId, i.debtor.name, face, advance, reserve,
+     fields.has('advanced_on') ? p.advanced_on : e.advanced_on,
+     fields.has('notes') ? p.notes : e.notes]);
+  if (fields.has('face_amount') || fields.has('advanced_on')) {
+    await c.query(
+      `UPDATE factoring_events SET amount = $2, occurred_on = $3
+        WHERE factored_invoice_id = $1 AND event_type = 'advance'`,
+      [e.id, advance, fields.has('advanced_on') ? p.advanced_on : e.advanced_on]);
+  }
+
+  const col = p.collection;
+  if (col && (fields.has('collected_on') || fields.has('amount_received') || fields.has('check'))) {
+    // The payment is replaced, not added to: the sheet is the record of it.
+    await c.query(
+      `UPDATE factored_invoices
+          SET collected_on = $2, status = CASE WHEN status = 'advanced' THEN 'collected'::factored_invoice_status ELSE status END,
+              updated_at = NOW()
+        WHERE id = $1`, [e.id, col.collected_on]);
+    await c.query(`DELETE FROM factoring_events WHERE factored_invoice_id = $1 AND event_type = 'payment_received'`, [e.id]);
+    await c.query(
+      `INSERT INTO factoring_events (company_id, factored_invoice_id, event_type, amount, occurred_on, memo)
+       VALUES ($1,$2,'payment_received',$3,$4,$5)`,
+      [e.company_id, e.id, col.amount_received, col.collected_on,
+       col.check_number ? `Check #${col.check_number}` : (e.payment_memo ?? null)]);
+  }
+
+  const after = await c.query(`SELECT * FROM factored_invoices WHERE id = $1`, [e.id]);
+  await audit(c, {
+    platformUserId, action: 'import_update', entityType: 'factored_invoice', entityId: e.id,
+    companyId: e.company_id, before: before.rows[0], ip,
+    after: { ...after.rows[0], import_row: i.row, changes: i.changes },
+  });
+}
+
+adminRouter.post(
+  '/invoices/import',
+  validate(z.object({ csv: z.string().min(1).max(2_000_000), dry_run: z.boolean().default(true) })),
+  asyncHandler(async (req, res) => {
+    const { csv, dry_run } = req.body as { csv: string; dry_run: boolean };
+    const raw = parseDelimited(csv);
+
+    const errors: { row: number; message: string }[] = [];
+    const valid: ParsedRow[] = [];
+
+    raw.forEach((r, i) => {
+      // +2: 1-indexed, plus the header line.
+      const rowNum = i + 2;
+      // Skip rows that are entirely blank — operator sheets often carry
+      // trailing empty rows and yelling about them adds noise, not signal.
+      if (!Object.values(r).some((v) => v.trim() !== '')) return;
+      try {
+        valid.push({ row: rowNum, payload: toAdvancePayload(r) });
+      } catch (err) {
+        errors.push({ row: rowNum, message: (err as Error).message });
+      }
+    });
+
+    const summarize = (items: PlanItem[], planErrors: { row: number; message: string }[]) => {
+      const all = [...errors, ...planErrors].sort((a, b) => a.row - b.row);
+      const count = (a: PlanItem['action']) => items.filter((i) => i.action === a).length;
+      return {
+        errors: all,
+        counts: { create: count('create'), update: count('update'), unchanged: count('unchanged') },
+        would_apply: count('create') + count('update'),
+        preview: items.map(previewItem),
+      };
+    };
+
+    if (dry_run || errors.length) {
+      // Reads only: the plan resolves names and matches without writing.
+      const plan = await withAdminTransaction((c) => planImport(c, valid));
+      res.json({ data: { dry_run: true, applied: 0, ...summarize(plan.items, plan.errors) } });
+      return;
+    }
+
+    // One transaction — either the whole batch lands or none does. The plan is
+    // made again here, against the book as it is now.
+    const out = await withAdminTransaction(async (c) => {
+      const plan = await planImport(c, valid);
+      if (plan.errors.length) {
+        throw Object.assign(new Error(`Row ${plan.errors[0]!.row}: ${plan.errors[0]!.message}`), { status: 422 });
+      }
+      const newDebtors = new Map<string, string>();
+      const debtorFor = async (i: PlanItem) => {
+        if (i.debtor.id) return i.debtor.id;
+        const k = i.debtor.name.toLowerCase();
+        const hit = newDebtors.get(k);
+        if (hit) return hit;
+        // New agencies start verification-unknown, so the underwriting engine
+        // treats them as unproven until someone fills in their attributes.
+        const made = await c.query<{ id: string }>(`INSERT INTO factoring_debtors (legal_name) VALUES ($1) RETURNING id`, [i.debtor.name]);
+        newDebtors.set(k, made.rows[0]!.id);
+        return made.rows[0]!.id;
+      };
+
+      let created = 0, updated = 0;
+      for (const i of plan.items) {
+        try {
+          if (i.action === 'unchanged') continue;
+          const debtor_id = await debtorFor(i);
+          if (i.action === 'update') {
+            await applyImportUpdate(c, i, debtor_id, req.platform.userId, req.ip ?? null);
+            updated++;
+            continue;
+          }
+          const p = i.payload;
+          const funded = await fundInvoice(c, {
+            company_id: i.client.company_id, debtor_id,
+            invoice_number: p.invoice_number,
+            face_amount: p.face_amount,
+            advanced_on: p.advanced_on,
+            invoice_due_on: null,
+            fee_schedule_id: null,          // the client's default schedule applies
+            invoice_id: null, job_id: null,
+            notes: p.notes,
+          }, req.platform.userId, req.ip ?? null);
+
+          // Chain the collection when the workbook says the money came back.
+          if (p.collection) {
+            await c.query(
+              `UPDATE factored_invoices SET status='collected', collected_on=$2, updated_at=NOW()
+                WHERE id=$1 AND status='advanced'`,
+              [funded!['id'], p.collection.collected_on]);
+            await c.query(
+              `INSERT INTO factoring_events (company_id,factored_invoice_id,event_type,amount,occurred_on,memo)
+               VALUES ($1,$2,'payment_received',$3,$4,$5)`,
+              [i.client.company_id, funded!['id'], p.collection.amount_received, p.collection.collected_on,
+               p.collection.check_number ? `Check #${p.collection.check_number}` : null]);
+          }
+          created++;
+        } catch (err) {
+          // A failure inside the transaction aborts the whole batch, so the
+          // operator sees which row broke rather than a partial application.
+          throw Object.assign(new Error(`Row ${i.row}: ${(err as Error).message}`), { status: 422 });
+        }
+      }
+      return { created, updated, unchanged: plan.items.filter((i) => i.action === 'unchanged').length };
+    });
+
+    res.status(201).json({ data: { dry_run: false, applied: out.created + out.updated, ...out, errors: [] } });
   })
 );
 
