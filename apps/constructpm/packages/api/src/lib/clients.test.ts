@@ -124,6 +124,37 @@ describe.runIf(enabled)('operator client setup (V014)', () => {
     expect(r.rows[0]).toMatchObject({ company_id: TENANT, company_name: 'Software Tenant V014', user_name: 'Bo Boss' });
   });
 
+  it('shows the operator the number and name of funded jobs only (V015)', async () => {
+    const co = await newClient(`Jobs Client ${tag()}`);
+    const user = await owner.query<{ id: string }>(
+      `INSERT INTO users (company_id,email,password_hash,first_name,last_name,role)
+       VALUES ($1,$2,'$argon2id$x','J','J','owner') RETURNING id`, [co, `j-${tag()}@client-v015.test`]);
+    const jobs = await owner.query<{ id: string; job_number: string }>(
+      `INSERT INTO jobs (company_id, name, job_number, status, created_by)
+       VALUES ($1,'Funded Job','FJ-1','active',$2), ($1,'Unfunded Secret Job','UJ-1','active',$2)
+       RETURNING id, job_number`, [co, user.rows[0]!.id]);
+    const funded = jobs.rows.find((j) => j.job_number === 'FJ-1')!;
+    const debtor = await owner.query<{ id: string }>(
+      `INSERT INTO factoring_debtors (legal_name) VALUES ($1) RETURNING id`, [`Agency ${tag()}`]);
+    const fc = await owner.query<{ id: string }>(`SELECT id FROM factoring_clients WHERE company_id = $1`, [co]);
+    await owner.query(
+      `INSERT INTO factored_invoices (company_id, factoring_client_id, debtor_id, debtor_name, job_id, invoice_number,
+         face_amount, advance_rate_pct, recourse_days, advance_amount, reserve_amount, status, advanced_on)
+       VALUES ($1,$2,$3,'Agency',$4,'INV-V015',1000,80,90,800,200,'advanced',CURRENT_DATE)`,
+      [co, fc.rows[0]!.id, debtor.rows[0]!.id, funded.id]);
+
+    const seen = await admin.query(`SELECT job_number, name FROM jobs WHERE company_id IS NOT DISTINCT FROM company_id AND id = ANY($1)`,
+      [jobs.rows.map((j) => j.id)]).catch(() => null);
+    // company_id isn't granted, so even naming it in a filter is refused…
+    expect(seen).toBeNull();
+    const visible = await admin.query(`SELECT job_number, name FROM jobs WHERE id = ANY($1)`, [jobs.rows.map((j) => j.id)]);
+    expect(visible.rows).toEqual([{ job_number: 'FJ-1', name: 'Funded Job' }]);
+    // …and so is every other job column.
+    await expect(admin.query(`SELECT status FROM jobs WHERE id = $1`, [funded.id])).rejects.toThrow(/permission denied/i);
+    await owner.query(`DELETE FROM factored_invoices WHERE company_id = $1`, [co]);
+    await owner.query(`DELETE FROM factoring_debtors WHERE id = $1`, [debtor.rows[0]!.id]);
+  });
+
   it('keeps every setup function away from the tenant/applicant role', async () => {
     for (const q of [
       `SELECT * FROM admin_login_for_email('a@b.c')`,

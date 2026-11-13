@@ -5,10 +5,10 @@ import { Shield, Loader2, LogOut, Upload, AlertTriangle } from 'lucide-react';
 import { adminApi, useAdminStore, hasAdminToken } from '../../lib/admin-api';
 import { DebtorsPanel } from './DebtorsPanel';
 import { formatCurrency, formatDate } from '../../lib/api';
-import { factoredInvoiceRef } from '@constructpm/shared';
 import { UnderwritingQueue } from './UnderwritingQueue';
 import { ApplicationsPanel } from './ApplicationsPanel';
 import { ClientsPanel } from './ClientsPanel';
+import { AdvancesTable } from './AdvancesTable';
 
 // ─── Login ────────────────────────────────────────────────────────────────────
 function AdminLogin() {
@@ -384,7 +384,6 @@ export function AdminConsolePage() {
   const logout = useAdminStore((s) => s.logout);
   const [tab, setTab] = useState<(typeof TABS)[number]>('Requests');
   const [funding, setFunding] = useState(false);
-  const qc = useQueryClient();
   const signedIn = Boolean(email) && hasAdminToken();
   const { data: appCounts } = useQuery<Record<string, number>>({
     queryKey: ['admin-application-counts'],
@@ -441,7 +440,7 @@ export function AdminConsolePage() {
               </button>
             </div>
             {funding && <FundForm onDone={() => setFunding(false)} />}
-            <AdvancesTable onChanged={() => qc.invalidateQueries({ queryKey: ['admin-invoices'] })} />
+            <AdvancesTable />
           </>
         )}
         {tab === 'Clients' && <ClientsPanel />}
@@ -457,78 +456,6 @@ export function AdminConsolePage() {
             ['action', 'Action'], ['entity_type', 'Entity'], ['company_id', 'Company'],
           ]} />}
       </main>
-    </div>
-  );
-}
-
-function AdvancesTable({ onChanged }: { onChanged: () => void }) {
-  const { data, isLoading } = useQuery({
-    queryKey: ['admin-invoices'], queryFn: () => adminApi.get('/invoices').then(r => r.data.data),
-  });
-
-  const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: 'collect' | 'close' }) =>
-      adminApi.post(`/invoices/${id}/${action}`, action === 'collect'
-        ? { collected_on: new Date().toISOString().slice(0, 10) }
-        : { closed_on: new Date().toISOString().slice(0, 10) }),
-    onSuccess: () => { toast.success('Updated'); onChanged(); },
-    onError: (e: { response?: { data?: { message?: string } } }) =>
-      toast.error(e.response?.data?.message ?? 'Action failed'),
-  });
-
-  if (isLoading) return <div className="card p-8 text-center text-slate-500 text-sm">Loading…</div>;
-
-  return (
-    <div className="card overflow-x-auto">
-      <table className="w-full min-w-[52rem]">
-        <thead className="bg-slate-50 border-b border-slate-200">
-          <tr>
-            {['Client', 'Invoice', 'Debtor', 'Face', 'Advanced', 'Fees', 'Days', 'Status', ''].map((h) => (
-              <th key={h} className="table-header">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {(data ?? []).length === 0 && (
-            <tr><td colSpan={9} className="px-4 py-12 text-center text-slate-500 text-sm">No advances yet</td></tr>
-          )}
-          {(data ?? []).map((r: Record<string, string>) => (
-            <tr key={r['id']} className="hover:bg-slate-50">
-              <td className="table-cell">{r['company_name']}</td>
-              <td className="table-cell font-medium font-mono">
-                {factoredInvoiceRef({ id: r['id']!, invoice_number: r['invoice_number'] ?? null })}
-              </td>
-              <td className="table-cell">{r['debtor_name']}</td>
-              <td className="table-cell text-right tabular-nums">{formatCurrency(r['face_amount'])}</td>
-              <td className="table-cell text-right tabular-nums">{formatCurrency(r['advance_amount'])}</td>
-              <td className="table-cell text-right tabular-nums">{formatCurrency(r['accrued_fee'])}</td>
-              <td className="table-cell text-right tabular-nums">{r['days_outstanding'] ?? '—'}</td>
-              <td className="table-cell">
-                {r['status']}
-                {String(r['direct_payment_reported']) === 'true' && ['pending', 'advanced'].includes(r['status'] ?? '') && (
-                  <span className="badge-orange ml-2" title="The client reports the agency paid them directly">
-                    client paid directly
-                  </span>
-                )}
-              </td>
-              <td className="table-cell text-right">
-                {r['status'] === 'advanced' && (
-                  <button className="btn-secondary btn-sm"
-                          onClick={() => act.mutate({ id: r['id']!, action: 'collect' })}>
-                    Mark paid
-                  </button>
-                )}
-                {r['status'] === 'collected' && (
-                  <button className="btn-secondary btn-sm"
-                          onClick={() => act.mutate({ id: r['id']!, action: 'close' })}>
-                    Release reserve
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

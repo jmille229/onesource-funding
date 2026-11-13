@@ -155,6 +155,76 @@ clientsAdminRouter.get('/clients/:id', asyncHandler(async (req, res) => {
   res.json({ data: { client, logins: logins.rows } });
 }));
 
+/**
+ * A client's history: rolled-up stats (volume and revenue, exposure now,
+ * payment behavior, by agency) and the funding requests that never became
+ * advances. The advances themselves come from GET /invoices?company_id=.
+ */
+clientsAdminRouter.get('/clients/:id/history', asyncHandler(async (req, res) => {
+  const client = await loadClient(String(req.params['id']));
+  const co = client.company_id;
+  const [stats, agencies, requests] = await Promise.all([
+    pool().query(
+      `SELECT
+         COUNT(*) FILTER (WHERE fi.advanced_on IS NOT NULL)                         AS funded_count,
+         COALESCE(SUM(fi.face_amount)    FILTER (WHERE fi.advanced_on IS NOT NULL), 0) AS total_face,
+         COALESCE(SUM(fi.advance_amount) FILTER (WHERE fi.advanced_on IS NOT NULL), 0) AS total_advanced,
+         AVG(fi.face_amount) FILTER (WHERE fi.advanced_on IS NOT NULL)              AS avg_face,
+         COALESCE(SUM(factoring_accrued_fee(fi.id)) FILTER (WHERE fi.status IN ('collected','closed')), 0) AS fees_earned,
+         COALESCE(SUM(factoring_accrued_fee(fi.id)) FILTER (WHERE fi.status = 'advanced'), 0)             AS fees_accruing,
+         MIN(fi.advanced_on) AS first_advanced_on,
+         MAX(fi.advanced_on) AS last_advanced_on,
+
+         COUNT(*) FILTER (WHERE fi.status = 'advanced')                             AS open_count,
+         COALESCE(SUM(fi.advance_amount) FILTER (WHERE fi.status = 'advanced'), 0)  AS advanced_outstanding,
+         COALESCE(SUM(fi.face_amount)    FILTER (WHERE fi.status = 'advanced'), 0)  AS face_outstanding,
+         COALESCE(SUM(fi.reserve_amount) FILTER (WHERE fi.status IN ('advanced','collected')), 0) AS reserve_held,
+         COUNT(*) FILTER (WHERE fi.status = 'advanced'
+                            AND (fi.advanced_on + fi.recourse_days) - CURRENT_DATE BETWEEN 0 AND 14) AS nearing_recourse,
+         COUNT(*) FILTER (WHERE fi.status = 'advanced'
+                            AND (fi.advanced_on + fi.recourse_days) < CURRENT_DATE)  AS past_recourse,
+
+         COUNT(*) FILTER (WHERE fi.collected_on IS NOT NULL)                        AS paid_count,
+         ROUND(AVG(fi.collected_on - fi.advanced_on) FILTER (WHERE fi.collected_on IS NOT NULL), 1) AS avg_days_to_pay,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY fi.collected_on - fi.advanced_on)
+           FILTER (WHERE fi.collected_on IS NOT NULL)                               AS median_days_to_pay,
+         MAX(fi.collected_on - fi.advanced_on)                                      AS longest_days_to_pay,
+         COUNT(*) FILTER (WHERE fi.collected_on IS NOT NULL
+                            AND fi.collected_on - fi.advanced_on <= p.on_time_days)  AS paid_on_time,
+         MAX(p.on_time_days)                                                        AS on_time_days,
+         COUNT(*) FILTER (WHERE fi.status = 'charged_back')                         AS charged_back_count
+       FROM factored_invoices fi
+       CROSS JOIN LATERAL (SELECT on_time_days FROM underwriting_policy ORDER BY version DESC LIMIT 1) p
+       WHERE fi.company_id = $1`, [co]),
+    // Each agency this client has billed through One Source: volume, how
+    // fast it pays, and what's open with it now.
+    pool().query(
+      `SELECT fi.debtor_name,
+              COUNT(*) AS invoice_count,
+              SUM(fi.face_amount) AS total_face,
+              COUNT(*) FILTER (WHERE fi.collected_on IS NOT NULL) AS paid_count,
+              ROUND(AVG(fi.collected_on - fi.advanced_on) FILTER (WHERE fi.collected_on IS NOT NULL), 1) AS avg_days_to_pay,
+              COUNT(*) FILTER (WHERE fi.status = 'advanced') AS open_count,
+              COALESCE(SUM(fi.advance_amount) FILTER (WHERE fi.status = 'advanced'), 0) AS advanced_outstanding
+         FROM factored_invoices fi
+        WHERE fi.company_id = $1 AND fi.advanced_on IS NOT NULL
+        GROUP BY fi.debtor_name
+        ORDER BY SUM(fi.face_amount) DESC`, [co]),
+    // Requests that never became an advance: still pending, declined or withdrawn.
+    pool().query(
+      `SELECT id, invoice_number, customer_name, requested_amount, status, note, decline_reason,
+              requested_at, reviewed_at, source
+         FROM funding_requests
+        WHERE company_id = $1 AND factored_invoice_id IS NULL
+        ORDER BY requested_at DESC`, [co]),
+  ]);
+  res.json({ data: {
+    stats: { ...stats.rows[0], credit_limit: client['credit_limit'] ?? null },
+    agencies: agencies.rows,
+    requests: requests.rows,
+  } });
+}));
+
 /** Terms: status, fee schedule, credit limit, onboarding date, notes. */
 clientsAdminRouter.patch('/clients/:id',
   validate(z.object({

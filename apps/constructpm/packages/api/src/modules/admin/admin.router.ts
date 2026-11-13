@@ -326,15 +326,32 @@ adminRouter.get('/invoices', asyncHandler(async (req, res) => {
   params.push(parsePagination(req.query, { defaultPerPage: 1000, maxPerPage: 5000 }).limit);
   const r = await pool().query(`
     SELECT fi.*, c.name AS company_name,
+           -- The job or contract it was funded against (V015: number and name only).
+           j.job_number, j.name AS job_name,
+           -- What the agency actually paid, and the check number or reference
+           -- recorded with it (imports store "Check #1234").
+           pay.amount AS amount_received, pay.memo AS payment_memo,
+           -- The reserve paid back to the client, net of fees, when it closed.
+           rel.amount AS reserve_released,
            -- The client said the agency paid them directly (V012). Money owed to
            -- One Source sitting in the client's account — worth seeing at once.
            EXISTS (SELECT 1 FROM factoring_events fe
                     WHERE fe.factored_invoice_id = fi.id
                       AND fe.event_type = 'direct_payment_reported') AS direct_payment_reported,
            (COALESCE(fi.collected_on, CURRENT_DATE) - fi.advanced_on) AS days_outstanding,
+           (fi.advanced_on + fi.recourse_days) AS recourse_on,
            COALESCE(factoring_accrued_fee(fi.id),0) AS accrued_fee
       FROM factored_invoices fi
       JOIN companies c ON c.id = fi.company_id
+      LEFT JOIN jobs j ON j.id = fi.job_id
+      LEFT JOIN LATERAL (
+        SELECT SUM(fe.amount) AS amount, string_agg(fe.memo, '; ' ORDER BY fe.occurred_on) AS memo
+          FROM factoring_events fe
+         WHERE fe.factored_invoice_id = fi.id AND fe.event_type = 'payment_received') pay ON true
+      LEFT JOIN LATERAL (
+        SELECT SUM(fe.amount) AS amount
+          FROM factoring_events fe
+         WHERE fe.factored_invoice_id = fi.id AND fe.event_type = 'reserve_release') rel ON true
       ${where}
      ORDER BY fi.advanced_on DESC NULLS FIRST
      LIMIT $${params.length}`, params);
@@ -433,15 +450,23 @@ adminRouter.post('/invoices', validate(fundSchema), asyncHandler(async (req, res
 adminRouter.post(
   '/invoices/:id/collect',
   validate(z.object({
-    collected_on: z.string(),
+    collected_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date'),
     amount: z.number().positive().nullable().optional(),
-    memo: z.string().nullable().optional(),
+    memo: z.string().trim().max(500).nullable().optional(),
   })),
   asyncHandler(async (req, res) => {
     const b = req.body as Record<string, unknown>;
     const row = await withAdminTransaction(async (c) => {
       const before = await c.query(`SELECT * FROM factored_invoices WHERE id=$1`, [req.params['id']]);
       if (!before.rows[0]) throw Object.assign(new Error('not found'), { status: 404 });
+      // Compared in SQL: pg hands DATE back as a local-midnight Date, and
+      // comparing that in JS shifts a day in any zone west of UTC.
+      const early = await c.query<{ early: boolean }>(
+        `SELECT $2::date < advanced_on AS early FROM factored_invoices WHERE id = $1`,
+        [req.params['id'], b['collected_on']]);
+      if (early.rows[0]?.early) {
+        throw Object.assign(new Error('The payment date is before the advance date'), { status: 422 });
+      }
 
       const r = await c.query(
         `UPDATE factored_invoices
