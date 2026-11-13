@@ -206,7 +206,7 @@ export function FactoringPage() {
             {formatCurrency(summary.net_expected)}
           </p>
           <p className="text-xs text-slate-500 mt-0.5">
-            Reserve less {formatCurrency(summary.fees_accrued)} fees to date
+            Reserve less fees to date and any short payment
           </p>
         </div>
         <div className="card p-4">
@@ -318,8 +318,8 @@ export function FactoringPage() {
       </div>
 
       <p className="text-xs text-slate-500 mt-3">
-        Net expected is your reserve less fees accrued to date, and updates daily while an
-        invoice is outstanding. Final figures are confirmed when the customer pays.
+        Net expected is your reserve less fees accrued to date and, if an agency paid less than
+        the invoice, the difference. It updates daily while an invoice is outstanding. Final figures are confirmed when the customer pays.
       </p>
 
       <OnboardingDocuments />

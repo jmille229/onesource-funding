@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowLeft, Loader2, Plus, UserPlus } from 'lucide-react'
 import { adminApi } from '../../lib/admin-api';
 import { formatCurrency, formatDate, todayISO } from '../../lib/api';
 import { CopyLink } from './CopyLink';
+import { ClientHistory } from './ClientHistory';
 
 /**
  * Funding clients: the book, adding a client by hand (for clients signed
@@ -307,6 +308,8 @@ function ClientDetail({ id, onBack, initialLink, onLinkShown }: {
 }) {
   const [link, setLink] = useState<{ label: string; url: string; note?: string } | null>(
     initialLink ? { ...initialLink, note: 'Emailed to them if you chose to and email is set up — send it yourself if not. Works once, for 14 days.' } : null);
+  // A client just added has no history yet, so it opens on its setup.
+  const [view, setView] = useState<'history' | 'setup'>(initialLink ? 'setup' : 'history');
   const key = ['admin-client', id];
   const { data, isLoading } = useQuery<ClientDetailData>({
     queryKey: key, queryFn: () => adminApi.get(`/clients/${id}`).then((r) => r.data.data),
@@ -329,12 +332,28 @@ function ClientDetail({ id, onBack, initialLink, onLinkShown }: {
 
       {link && <CopyLink {...link} onDismiss={() => { setLink(null); onLinkShown(); }} />}
 
-      <div className="grid lg:grid-cols-2 gap-5 items-start">
-        <TermsCard key={`terms-${c.id}-${c.status}-${c.credit_limit}-${c.default_fee_schedule_id}`} client={c} />
-        <LoginsCard clientId={c.id} logins={data.logins}
-                    onLink={(l) => setLink({ ...l, note: 'Emailed to them if you chose to and email is set up — send it yourself if not. Works once, for 14 days.' })} />
+      <div className="flex gap-1 border-b border-slate-200" role="tablist">
+        {([['history', 'History'], ['setup', 'Terms, logins & screening']] as const).map(([v, label]) => (
+          <button key={v} role="tab" aria-selected={view === v} onClick={() => setView(v)}
+            className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${
+              view === v ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
+            {label}
+          </button>
+        ))}
       </div>
-      <ScreeningCard key={`screen-${c.id}`} client={c} />
+
+      {view === 'history' ? (
+        <ClientHistory clientId={c.id} companyId={c.company_id} companyName={c.company_name} />
+      ) : (
+        <>
+          <div className="grid lg:grid-cols-2 gap-5 items-start">
+            <TermsCard key={`terms-${c.id}-${c.status}-${c.credit_limit}-${c.default_fee_schedule_id}`} client={c} />
+            <LoginsCard clientId={c.id} logins={data.logins}
+                        onLink={(l) => setLink({ ...l, note: 'Emailed to them if you chose to and email is set up — send it yourself if not. Works once, for 14 days.' })} />
+          </div>
+          <ScreeningCard key={`screen-${c.id}`} client={c} />
+        </>
+      )}
     </div>
   );
 }
@@ -344,6 +363,7 @@ function useRefreshClient(id: string) {
   return () => {
     qc.invalidateQueries({ queryKey: ['admin-client', id] });
     qc.invalidateQueries({ queryKey: ['admin-clients'] });
+    qc.invalidateQueries({ queryKey: ['admin-client-history', id] });
   };
 }
 

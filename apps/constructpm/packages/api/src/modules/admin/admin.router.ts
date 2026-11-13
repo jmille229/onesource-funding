@@ -326,15 +326,37 @@ adminRouter.get('/invoices', asyncHandler(async (req, res) => {
   params.push(parsePagination(req.query, { defaultPerPage: 1000, maxPerPage: 5000 }).limit);
   const r = await pool().query(`
     SELECT fi.*, c.name AS company_name,
+           -- The job or contract it was funded against (V015: number and name only).
+           j.job_number, j.name AS job_name,
+           -- What the agency actually paid, and the check number or reference
+           -- recorded with it (imports store "Check #1234").
+           pay.amount AS amount_received, pay.memo AS payment_memo,
+           -- The reserve paid back to the client, net of fees, when it closed.
+           rel.amount AS reserve_released,
            -- The client said the agency paid them directly (V012). Money owed to
            -- One Source sitting in the client's account — worth seeing at once.
            EXISTS (SELECT 1 FROM factoring_events fe
                     WHERE fe.factored_invoice_id = fi.id
                       AND fe.event_type = 'direct_payment_reported') AS direct_payment_reported,
            (COALESCE(fi.collected_on, CURRENT_DATE) - fi.advanced_on) AS days_outstanding,
-           COALESCE(factoring_accrued_fee(fi.id),0) AS accrued_fee
+           (fi.advanced_on + fi.recourse_days) AS recourse_on,
+           COALESCE(factoring_accrued_fee(fi.id),0) AS accrued_fee,
+           -- V016: what the reserve release will be (or would be today), and
+           -- what the client owes if fees and a short payment exceed the reserve.
+           factoring_shortfall(fi.id) AS shortfall,
+           factoring_net_reserve(fi.id) AS net_reserve,
+           factoring_client_owes(fi.id) AS client_owes
       FROM factored_invoices fi
       JOIN companies c ON c.id = fi.company_id
+      LEFT JOIN jobs j ON j.id = fi.job_id
+      LEFT JOIN LATERAL (
+        SELECT SUM(fe.amount) AS amount, string_agg(fe.memo, '; ' ORDER BY fe.occurred_on) AS memo
+          FROM factoring_events fe
+         WHERE fe.factored_invoice_id = fi.id AND fe.event_type = 'payment_received') pay ON true
+      LEFT JOIN LATERAL (
+        SELECT SUM(fe.amount) AS amount
+          FROM factoring_events fe
+         WHERE fe.factored_invoice_id = fi.id AND fe.event_type = 'reserve_release') rel ON true
       ${where}
      ORDER BY fi.advanced_on DESC NULLS FIRST
      LIMIT $${params.length}`, params);
@@ -433,15 +455,23 @@ adminRouter.post('/invoices', validate(fundSchema), asyncHandler(async (req, res
 adminRouter.post(
   '/invoices/:id/collect',
   validate(z.object({
-    collected_on: z.string(),
+    collected_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date'),
     amount: z.number().positive().nullable().optional(),
-    memo: z.string().nullable().optional(),
+    memo: z.string().trim().max(500).nullable().optional(),
   })),
   asyncHandler(async (req, res) => {
     const b = req.body as Record<string, unknown>;
     const row = await withAdminTransaction(async (c) => {
       const before = await c.query(`SELECT * FROM factored_invoices WHERE id=$1`, [req.params['id']]);
       if (!before.rows[0]) throw Object.assign(new Error('not found'), { status: 404 });
+      // Compared in SQL: pg hands DATE back as a local-midnight Date, and
+      // comparing that in JS shifts a day in any zone west of UTC.
+      const early = await c.query<{ early: boolean }>(
+        `SELECT $2::date < advanced_on AS early FROM factored_invoices WHERE id = $1`,
+        [req.params['id'], b['collected_on']]);
+      if (early.rows[0]?.early) {
+        throw Object.assign(new Error('The payment date is before the advance date'), { status: 422 });
+      }
 
       const r = await c.query(
         `UPDATE factored_invoices
@@ -467,198 +497,77 @@ adminRouter.post(
   })
 );
 
-/** Releases the reserve (less fees) and closes the advance. */
+/**
+ * Releases the reserve and closes the advance. What goes back to the client
+ * is the reserve less fees and less any short payment by the agency (V016).
+ * The operator may release a different amount — e.g. the agency withheld for
+ * something that wasn't the client's doing — but only with a reason, which is
+ * recorded on the ledger and in the audit log.
+ */
 adminRouter.post(
   '/invoices/:id/close',
-  validate(z.object({ closed_on: z.string(), memo: z.string().nullable().optional() })),
+  validate(z.object({
+    closed_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date'),
+    memo: z.string().trim().max(500).nullable().optional(),
+    release_amount: z.number().nonnegative().nullable().optional(),
+    override_reason: z.string().trim().max(500).nullable().optional(),
+  })),
   asyncHandler(async (req, res) => {
-    const b = req.body as Record<string, unknown>;
+    const b = req.body as {
+      closed_on: string; memo?: string | null; release_amount?: number | null; override_reason?: string | null;
+    };
     const row = await withAdminTransaction(async (c) => {
-      const before = await c.query(`SELECT * FROM factored_invoices WHERE id=$1`, [req.params['id']]);
+      const before = await c.query(`SELECT * FROM factored_invoices WHERE id=$1 FOR UPDATE`, [req.params['id']]);
       if (!before.rows[0]) throw Object.assign(new Error('not found'), { status: 404 });
 
-      const fee = await c.query<{ fee: string }>(
-        `SELECT COALESCE(factoring_accrued_fee($1),0) AS fee`, [req.params['id']]);
-      const net = Math.max(Number(before.rows[0]['reserve_amount']) - Number(fee.rows[0]!.fee), 0);
+      const calc = await c.query<{ fee: string; shortfall: string; net: string; owes: string; early: boolean }>(
+        `SELECT COALESCE(factoring_accrued_fee($1),0) AS fee, factoring_shortfall($1) AS shortfall,
+                factoring_net_reserve($1) AS net, factoring_client_owes($1) AS owes,
+                $2::date < collected_on AS early
+           FROM factored_invoices WHERE id = $1`, [req.params['id'], b.closed_on]);
+      const k = calc.rows[0]!;
+      if (k.early) throw Object.assign(new Error('The release date is before the payment date'), { status: 422 });
+      const computed = Number(k.net);
+      const overriding = b.release_amount !== null && b.release_amount !== undefined
+        && Math.abs(b.release_amount - computed) >= 0.005;
+      if (overriding && !b.override_reason) {
+        throw Object.assign(new Error('Say why you are releasing a different amount'), { status: 422 });
+      }
+      if (overriding && b.release_amount! > Number(before.rows[0]['reserve_amount'])) {
+        throw Object.assign(new Error('You can’t release more than the reserve'), { status: 422 });
+      }
+      const amount = overriding ? b.release_amount! : computed;
 
       const r = await c.query(
         `UPDATE factored_invoices SET status='closed', closed_on=$2, updated_at=NOW()
           WHERE id=$1 AND status='collected' RETURNING *`,
-        [req.params['id'], b['closed_on']]);
+        [req.params['id'], b.closed_on]);
       if (!r.rows[0]) throw Object.assign(new Error('advance is not collected'), { status: 422 });
+
+      const money = (v: number | string) => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const breakdown = `Reserve ${money(before.rows[0]['reserve_amount'])} less fees ${money(k.fee)}`
+        + (Number(k.shortfall) > 0 ? ` less short payment ${money(k.shortfall)}` : '')
+        + ` = ${money(computed)}`
+        + (Number(k.owes) > 0 ? `; client owes ${money(k.owes)}` : '');
+      const memo = b.memo
+        ?? (overriding ? `Released ${money(amount)} instead of ${money(computed)}: ${b.override_reason}. (${breakdown})` : breakdown);
 
       await c.query(
         `INSERT INTO factoring_events (company_id,factored_invoice_id,event_type,amount,occurred_on,memo)
          VALUES ($1,$2,'reserve_release',$3,$4,$5)`,
-        [r.rows[0]['company_id'], r.rows[0]['id'], net, b['closed_on'],
-         b['memo'] ?? `Reserve released net of ${fee.rows[0]!.fee} fees`]);
+        [r.rows[0]['company_id'], r.rows[0]['id'], amount, b.closed_on, memo]);
 
       await audit(c, {
-        platformUserId: req.platform.userId, action: 'close', entityType: 'factored_invoice',
-        entityId: String(req.params['id']), companyId: String(r.rows[0]['company_id']),
-        before: before.rows[0], after: r.rows[0], ip: req.ip ?? null,
+        platformUserId: req.platform.userId, action: overriding ? 'close_override' : 'close',
+        entityType: 'factored_invoice', entityId: String(req.params['id']), companyId: String(r.rows[0]['company_id']),
+        before: before.rows[0],
+        after: { ...r.rows[0], released: amount, computed, fee: k.fee, shortfall: k.shortfall, client_owes: k.owes,
+                 override_reason: overriding ? b.override_reason : null },
+        ip: req.ip ?? null,
       });
-      return r.rows[0];
+      return { ...r.rows[0], released: amount, client_owes: k.owes };
     });
     res.json({ data: row });
-  })
-);
-
-// ─── CSV import ───────────────────────────────────────────────────────────────
-// The importer speaks the OneSource workbook's Advance Book columns directly,
-// so the sheet the operator already maintains can be pasted in unchanged. The
-// column-to-payload mapping and every parser live in ./import-map, tested in
-// isolation there; this handler is the transactional shell around it.
-//
-// Nothing is written unless every row parses. Importing financial data blind is
-// how you end up reconciling a half-applied batch by hand.
-
-// Row splitting lives in ./import-map (parseDelimited) alongside the field
-// parsers so it can be tested in isolation.
-
-/**
- * Resolves a friendly Borrower name to a factoring_client, and a Creditor name
- * to a factoring_debtor. Both are cached across a batch — a workbook of 300
- * rows typically references a dozen names and lookups shouldn't cost 300 round
- * trips. Match is case- and whitespace-insensitive; a Borrower with no matching
- * factoring_client fails the row rather than silently creating one, because
- * the operator sets up clients deliberately (fee schedule, credit limit, etc).
- *
- * A Creditor with no debtor row IS created — that's a bookkeeping detail rather
- * than a policy decision, and forcing the operator to pre-seed debtors before
- * every import would be busywork.
- */
-class NameResolver {
-  private clients = new Map<string, { id: string; company_id: string }>();
-  private debtors = new Map<string, string>();
-  constructor(private c: import('pg').PoolClient) {}
-  private static key(s: string) { return s.trim().toLowerCase().replace(/\s+/g, ' '); }
-
-  async client(name: string): Promise<{ id: string; company_id: string }> {
-    const k = NameResolver.key(name);
-    const hit = this.clients.get(k);
-    if (hit) return hit;
-    const r = await this.c.query<{ id: string; company_id: string }>(
-      `SELECT fc.id, fc.company_id
-         FROM factoring_clients fc JOIN companies co ON co.id = fc.company_id
-        WHERE LOWER(BTRIM(co.name)) = $1`, [k]);
-    if (!r.rows[0]) throw new Error(`Borrower: "${name}" is not a set-up factoring client`);
-    this.clients.set(k, r.rows[0]);
-    return r.rows[0];
-  }
-
-  async debtor(name: string): Promise<string> {
-    const k = NameResolver.key(name);
-    const hit = this.debtors.get(k);
-    if (hit) return hit;
-    const found = await this.c.query<{ id: string }>(
-      `SELECT id FROM factoring_debtors
-        WHERE LOWER(BTRIM(legal_name)) = $1 OR LOWER(BTRIM(COALESCE(dba,''))) = $1
-        LIMIT 1`, [k]);
-    if (found.rows[0]) { this.debtors.set(k, found.rows[0].id); return found.rows[0].id; }
-    // Create with the operator's spelling and mark it verification-unknown, so
-    // the underwriting engine treats it as unproven until someone fills in the
-    // agency's portal/confirmation/ACH/staff attributes.
-    const made = await this.c.query<{ id: string }>(
-      `INSERT INTO factoring_debtors (legal_name) VALUES ($1) RETURNING id`, [name.trim()]);
-    this.debtors.set(k, made.rows[0]!.id);
-    return made.rows[0]!.id;
-  }
-}
-
-interface ParsedRow { row: number; payload: import('./import-map.js').AdvanceRowPayload; }
-
-adminRouter.post(
-  '/invoices/import',
-  validate(z.object({ csv: z.string().min(1).max(2_000_000), dry_run: z.boolean().default(true) })),
-  asyncHandler(async (req, res) => {
-    const { csv, dry_run } = req.body as { csv: string; dry_run: boolean };
-    const raw = parseDelimited(csv);
-
-    const errors: { row: number; message: string }[] = [];
-    const valid: ParsedRow[] = [];
-
-    raw.forEach((r, i) => {
-      // +2: 1-indexed, plus the header line.
-      const rowNum = i + 2;
-      // Skip rows that are entirely blank — operator sheets often carry
-      // trailing empty rows and yelling about them adds noise, not signal.
-      if (!Object.values(r).some((v) => v.trim() !== '')) return;
-      try {
-        valid.push({ row: rowNum, payload: toAdvancePayload(r) });
-      } catch (err) {
-        errors.push({ row: rowNum, message: (err as Error).message });
-      }
-    });
-
-    if (dry_run || errors.length) {
-      res.json({
-        data: {
-          dry_run: true,
-          applied: 0,
-          would_apply: valid.length,
-          errors,
-          preview: valid.slice(0, 20).map((v) => ({
-            row: v.row,
-            borrower: v.payload.borrower,
-            creditor: v.payload.creditor,
-            invoice_number: v.payload.invoice_number,
-            face_amount: v.payload.face_amount,
-            advanced_on: v.payload.advanced_on,
-            will_settle: v.payload.collection !== null,
-          })),
-        },
-      });
-      return;
-    }
-
-    // One transaction, one resolver — either the whole batch lands or none does.
-    const applied = await withAdminTransaction(async (c) => {
-      const resolver = new NameResolver(c);
-      let n = 0;
-      for (const { row, payload } of valid) {
-        try {
-          const { company_id } = await resolver.client(payload.borrower);
-          const debtor_id = await resolver.debtor(payload.creditor);
-
-          const funded = await fundInvoice(c, {
-            company_id, debtor_id,
-            invoice_number: payload.invoice_number,
-            face_amount: payload.face_amount,
-            advanced_on: payload.advanced_on,
-            invoice_due_on: null,
-            fee_schedule_id: null,          // let the client's default_fee_schedule apply
-            invoice_id: null, job_id: null,
-            notes: payload.notes,
-          }, req.platform.userId, req.ip ?? null);
-
-          // Chain the collection when the workbook says the money came back.
-          if (payload.collection) {
-            const memo = payload.collection.check_number
-              ? `Check #${payload.collection.check_number}`
-              : null;
-            await c.query(
-              `UPDATE factored_invoices SET status='collected', collected_on=$2, updated_at=NOW()
-                WHERE id=$1 AND status='advanced'`,
-              [funded!['id'], payload.collection.collected_on]);
-            await c.query(
-              `INSERT INTO factoring_events (company_id,factored_invoice_id,event_type,amount,occurred_on,memo)
-               VALUES ($1,$2,'payment_received',$3,$4,$5)`,
-              [company_id, funded!['id'], payload.collection.amount_received,
-               payload.collection.collected_on, memo]);
-          }
-          n++;
-        } catch (err) {
-          // A failure inside the transaction has to abort the whole batch, so
-          // the operator sees which row broke rather than a partial application.
-          throw Object.assign(new Error(`Row ${row}: ${(err as Error).message}`),
-            { status: 422 });
-        }
-      }
-      return n;
-    });
-
-    res.status(201).json({ data: { dry_run: false, applied, errors: [] } });
   })
 );
 

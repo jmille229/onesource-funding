@@ -23,7 +23,8 @@ const FINANCE_ROLES = ['owner', 'admin', 'accountant'] as const;
 //                     number a contractor actually worries about
 //   accrued_fee       from the tiered schedule, via the SECURITY DEFINER
 //                     function (tier tables are not readable by tenants)
-//   net_expected      what lands when the debtor pays: reserve less fees
+//   net_expected      what lands when the debtor pays: reserve less fees and
+//                     any short payment by the agency (V016)
 //
 // The fee schedule itself is never exposed; the client sees the outcome, not the
 // curve.
@@ -49,7 +50,7 @@ const INVOICE_SELECT = `
               ELSE (fi.advanced_on + fi.recourse_days) - CURRENT_DATE
          END AS days_to_recourse,
          COALESCE(factoring_accrued_fee(fi.id), 0) AS accrued_fee,
-         GREATEST(fi.reserve_amount - COALESCE(factoring_accrued_fee(fi.id), 0), 0) AS net_expected
+         factoring_net_reserve(fi.id) AS net_expected
     FROM factored_invoices fi
     LEFT JOIN jobs j ON j.id = fi.job_id
 `;
@@ -227,7 +228,7 @@ factoringRouter.get('/summary', requireRole(...FINANCE_ROLES), asyncHandler(asyn
       COALESCE(SUM(advance_amount) FILTER (WHERE status = 'advanced'), 0) AS advanced_outstanding,
       COALESCE(SUM(reserve_amount) FILTER (WHERE status IN ('advanced','collected')), 0) AS reserve_held,
       COALESCE(SUM(factoring_accrued_fee(id)) FILTER (WHERE status = 'advanced'), 0) AS fees_accrued,
-      COALESCE(SUM(GREATEST(reserve_amount - COALESCE(factoring_accrued_fee(id),0),0))
+      COALESCE(SUM(factoring_net_reserve(id))
                FILTER (WHERE status IN ('advanced','collected')), 0)   AS net_expected,
       COUNT(*) FILTER (
         WHERE status = 'advanced'
