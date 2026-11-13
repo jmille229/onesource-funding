@@ -2,14 +2,15 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  ArrowLeft, Check, CheckCircle2, Circle, Copy, Download, Eye, EyeOff, FileText, Loader2,
-  ListChecks, Mail, Phone, X,
+  ArrowLeft, Check, CheckCircle2, Circle, Download, Eye, EyeOff, FileText, Loader2,
+  ListChecks, Mail, Phone,
 } from 'lucide-react';
 import { APPLICATION_STATUS_LABELS, type ApplicationStatus } from '@constructpm/shared';
 import { adminApi } from '../../lib/admin-api';
 import { formatCurrency, formatDate } from '../../lib/api';
 import { downloadVia } from '../../lib/download';
 import { RequirementsPanel } from './RequirementsPanel';
+import { CopyLink } from './CopyLink';
 
 /**
  * Funding applications from apply.os-funding.com: the queue, one application
@@ -333,29 +334,6 @@ function Section({ title, rows }: { title: string; rows: [string, string | null 
           </div>
         ))}
       </dl>
-    </div>
-  );
-}
-
-/** A link to hand over by hand (email may not be configured), with copy. */
-function CopyLink({ label, url, note, onDismiss }: { label: string; url: string; note?: string; onDismiss: () => void }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="rounded-md border border-brand-100 bg-brand-50 p-3">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-sm font-medium text-slate-900">{label}</p>
-        <button onClick={onDismiss} className="p-1 -m-1 text-slate-400 hover:text-slate-600" aria-label="Dismiss"><X className="w-4 h-4" /></button>
-      </div>
-      <div className="mt-2 flex flex-col sm:flex-row gap-2">
-        <input readOnly value={url} className="input font-mono text-xs flex-1 min-w-0" onFocus={(e) => e.currentTarget.select()} aria-label={label} />
-        <button className="btn-secondary flex-shrink-0" onClick={() => {
-          void navigator.clipboard.writeText(url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); },
-            () => toast.error('Couldn’t copy — select the link instead'));
-        }}>
-          {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />} {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      {note && <p className="text-xs text-slate-600 mt-1.5">{note}</p>}
     </div>
   );
 }
