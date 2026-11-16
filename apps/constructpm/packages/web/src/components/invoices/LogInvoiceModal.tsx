@@ -22,7 +22,7 @@ export function LogInvoiceModal({ onClose, defaultJobId }: { onClose: () => void
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
-    job_id: defaultJobId ?? '', customer_id: '', invoice_number: '', amount: '',
+    job_id: defaultJobId ?? '', customer_id: '', contract_reference: '', invoice_number: '', amount: '',
     submitted: true, submitted_on: todayISO(), submission_method: '', agency_reference: '',
     due_date: '', notes: '',
   });
@@ -50,7 +50,7 @@ export function LogInvoiceModal({ onClose, defaultJobId }: { onClose: () => void
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.job_id || !form.customer_id) { toast.error('Choose the job and the agency'); return; }
+    if (!form.customer_id) { toast.error('Choose the agency you billed'); return; }
     const amount = parseFloat(form.amount);
     if (!itemize && !(amount > 0)) { toast.error('Enter the invoice amount'); return; }
     if (itemize && items.some((i) => !i.description.trim() || !i.unit_price)) {
@@ -59,7 +59,8 @@ export function LogInvoiceModal({ onClose, defaultJobId }: { onClose: () => void
     setBusy(true);
     try {
       const r = await api.post('/invoices', {
-        job_id: form.job_id,
+        job_id: form.job_id || null,
+        contract_reference: form.contract_reference.trim() || null,
         customer_id: form.customer_id,
         invoice_number: form.invoice_number.trim() || null,
         status: form.submitted ? 'sent' : 'draft',
@@ -113,15 +114,23 @@ export function LogInvoiceModal({ onClose, defaultJobId }: { onClose: () => void
 
         <form onSubmit={save} className="p-5 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="label" htmlFor="li-job">Job *</label>
-              <select id="li-job" className="input" value={form.job_id} onChange={(e) => pickJob(e.target.value)} required>
-                <option value="">— Select job —</option>
-                {jobs.map((j) => <option key={j.id} value={j.id}>{j.job_number} — {j.name}</option>)}
-              </select>
-            </div>
             <ContactPicker id="li-agency" label="Agency (bill to) *" required
                            value={form.customer_id} onChange={(id) => set('customer_id', id)} />
+            <div>
+              <label className="label" htmlFor="li-contract">Contract or PO #</label>
+              <input id="li-contract" className="input" value={form.contract_reference} maxLength={100}
+                     onChange={(e) => set('contract_reference', e.target.value)}
+                     placeholder="Optional" />
+            </div>
+            {(jobs.length > 0 || defaultJobId) && (
+              <div>
+                <label className="label" htmlFor="li-job">Job</label>
+                <select id="li-job" className="input" value={form.job_id} onChange={(e) => pickJob(e.target.value)}>
+                  <option value="">None</option>
+                  {jobs.map((j) => <option key={j.id} value={j.id}>{j.job_number} — {j.name}</option>)}
+                </select>
+              </div>
+            )}
             <div>
               <label className="label" htmlFor="li-num">Your invoice number</label>
               <input id="li-num" className="input" value={form.invoice_number} maxLength={50}

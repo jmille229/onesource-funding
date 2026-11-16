@@ -8,6 +8,7 @@ import {
 import { toast } from 'sonner';
 import { useAuthStore } from '../../stores/auth.store';
 import { api, apiError } from '../../lib/api';
+import { useFundingAccount } from '../../lib/funding';
 import logo from '../../assets/onesource-logo.png';
 import { clsx } from 'clsx';
 
@@ -36,7 +37,9 @@ const nav = [
   { to: '/contacts',  icon: Users,           label: 'Contacts' },
   { to: '/reports',   icon: BarChart3,       label: 'Reports' },
   // Funding shows the company's factoring position, so it is limited to the
-  // finance-facing roles. The API enforces the same set independently.
+  // finance-facing roles. The API enforces the same set independently. It is
+  // "Funding" for a company that factors and "Get paid now" for one that
+  // doesn't yet (see SidebarContent).
   { to: '/funding',   icon: Banknote,        label: 'Funding',
     roles: ['owner', 'admin', 'accountant'] },
 ];
@@ -85,7 +88,13 @@ function TurnOnTools() {
 /** Sidebar contents — identical in the fixed desktop rail and the mobile drawer. */
 function SidebarContent({ onNavigate, mode }: { onNavigate?: () => void; mode: 'funding' | 'full' | null }) {
   const { user, logout } = useAuthStore();
-  const items = mode === 'funding' ? fundingNav : nav;
+  const funding = useFundingAccount();
+  // Funding is part of the product only for a company that factors. Everyone
+  // else sees the way in instead, and nothing while that's being worked out.
+  const items = (mode === 'funding' ? fundingNav : nav)
+    .filter((n) => n.to !== '/funding' || mode === 'funding' || funding.isClient || funding.isProspect)
+    .map((n) => (n.to === '/funding' && mode !== 'funding' && !funding.isClient
+      ? { ...n, label: 'Get paid now', invite: true } : { ...n, invite: false }));
 
   return (
     <>
@@ -103,7 +112,7 @@ function SidebarContent({ onNavigate, mode }: { onNavigate?: () => void; mode: '
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
         {mode !== null && items
           .filter((item) => !item.roles || (user?.role && item.roles.includes(user.role)))
-          .map(({ to, icon: Icon, label }) => (
+          .map(({ to, icon: Icon, label, invite }) => (
           <NavLink
             key={to}
             to={to}
@@ -112,12 +121,19 @@ function SidebarContent({ onNavigate, mode }: { onNavigate?: () => void; mode: '
               clsx(
                 // min-h-11 keeps every row at a comfortable touch target (~44px).
                 'flex items-center gap-3 px-3 min-h-11 rounded-md text-sm font-medium transition-colors',
-                isActive ? 'bg-brand-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                isActive ? 'bg-brand-600 text-white'
+                  : invite ? 'text-emerald-300 hover:bg-slate-800 hover:text-emerald-200'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
               )
             }
           >
             <Icon className="w-4 h-4 flex-shrink-0" />
-            {label}
+            <span className="whitespace-nowrap">{label}</span>
+            {invite && (
+              <span className="ml-auto whitespace-nowrap rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                Up to 90%
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>

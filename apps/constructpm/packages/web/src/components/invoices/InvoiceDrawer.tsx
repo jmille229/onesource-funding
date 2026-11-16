@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   X, Download, Trash2, Upload, Loader2, Banknote, CheckCircle2, Send, Undo2, CircleDollarSign, FolderKanban,
+  Lock, FileSignature, ArrowRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DOC_TYPES, DOC_TYPE_LABELS, SUBMISSION_METHOD_LABELS, type DocType, type SubmissionMethod } from '@constructpm/shared';
@@ -11,13 +12,16 @@ import { useAuthStore } from '../../stores/auth.store';
 import {
   type InvoiceAction, type InvoiceDocument, invoiceStatusBadge, invoiceStatusLabel, isAwaitingAgency,
   nextAction, uploadInvoiceDocument, downloadAttachment, canEditInvoices, canRecordPayments,
-  canSeeFunding, canVoid, FUNDING_BADGE, FUNDING_LABEL, daysSince, isFundedOpen,
+  canVoid, FUNDING_BADGE, FUNDING_LABEL, daysSince, isFundedOpen, fundedBadge,
 } from '../../lib/invoices';
+import { useFundingAccount, ADVANCE_MAX } from '../../lib/funding';
 import { InvoiceActionModal, type ActionInvoice } from './InvoiceActionModal';
 import { RequestFundingModal } from '../RequestFundingModal';
 
 interface InvoiceDetail extends ActionInvoice {
-  job_id: string; job_name: string | null; job_number: string | null;
+  job_id: string | null; job_name: string | null; job_number: string | null;
+  contract_reference: string | null; source: 'client' | 'one_source';
+  funded_id: string | null; funded_on: string | null;
   issue_date: string; due_date: string; paid_amount: string | number;
   submitted_on: string | null; approved_on: string | null; returned_on: string | null; return_note: string | null;
   notes: string | null;
@@ -37,6 +41,7 @@ export function InvoiceDrawer({ invoiceId, fundingStatus, onClose }: {
 }) {
   const qc = useQueryClient();
   const role = useAuthStore((s) => s.user?.role);
+  const funding = useFundingAccount();
   const closeRef = useRef<HTMLButtonElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [action, setAction] = useState<InvoiceAction | null>(null);
@@ -107,7 +112,8 @@ export function InvoiceDrawer({ invoiceId, fundingStatus, onClose }: {
   const canAct = (a: InvoiceAction) => (a === 'payment' ? canRecordPayments(role) : canEditInvoices(role));
   const openFunding = fundingStatus && ['submitted', 'under_review', 'approved'].includes(fundingStatus);
   const fundable = inv && inv.status === 'approved' && Number(inv.balance_due) > 0 && !openFunding
-    && !isFundedOpen(inv.funded_status);
+    && !inv.funded_id;
+  const locked = Boolean(inv?.funded_id);
 
 
   return (
@@ -142,10 +148,31 @@ export function InvoiceDrawer({ invoiceId, fundingStatus, onClose }: {
               </div>
               <span className={invoiceStatusBadge(inv.status)}>{invoiceStatusLabel(inv.status)}</span>
             </div>
-            {inv.job_name && (
-              <Link to={`/jobs/${inv.job_id}`} className="text-sm text-brand-600 hover:underline inline-flex items-center gap-1">
-                <FolderKanban className="w-4 h-4" /> {inv.job_number} — {inv.job_name}
-              </Link>
+            {(inv.job_name || inv.contract_reference) && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                {inv.job_name && (
+                  <Link to={`/jobs/${inv.job_id}`} className="text-brand-600 hover:underline inline-flex items-center gap-1">
+                    <FolderKanban className="w-4 h-4" /> {inv.job_number} — {inv.job_name}
+                  </Link>
+                )}
+                {inv.contract_reference && (
+                  <span className="text-slate-600 inline-flex items-center gap-1">
+                    <FileSignature className="w-4 h-4 text-slate-400" /> Contract {inv.contract_reference}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Funded: the advance was made on these details, so they're fixed. */}
+            {locked && (
+              <p className="flex items-start gap-2 rounded-md bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600">
+                <Lock className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-slate-400" />
+                <span>
+                  Funded by One Source{inv.funded_on ? ` on ${formatDate(inv.funded_on)}` : ''}, so the amount,
+                  agency and invoice number are locked. Documents can still be added.
+                  {inv.source === 'one_source' && ' Added from your One Source funding history.'}
+                </span>
+              </p>
             )}
 
             {/* Next step */}
@@ -236,8 +263,34 @@ export function InvoiceDrawer({ invoiceId, fundingStatus, onClose }: {
               <p className="text-xs text-slate-500 mt-2">Payment due {formatDate(inv.due_date)}</p>
             </section>
 
-            {/* Funding */}
-            {canSeeFunding(role) && (
+            {/* Funding: the advance, for a company that factors. */}
+            {inv.funded_id && funding.isClient && <FundedPanel factoredId={inv.funded_id} />}
+
+            {/* The way in, for a company that doesn't factor yet. */}
+            {funding.isProspect && !inv.funded_id && inv.status === 'approved' && Number(inv.balance_due) > 0 && (
+              <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <p className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                  <Banknote className="w-4 h-4 text-emerald-700" /> Get paid on this invoice now
+                </p>
+                <p className="text-sm text-slate-700 mt-1">
+                  The agency has approved it. One Source can advance up to{' '}
+                  <strong className="tabular-nums">{formatCurrency(Number(inv.balance_due) * ADVANCE_MAX)}</strong>{' '}
+                  — often the same day — instead of you waiting on the agency.
+                </p>
+                <button className="btn btn-sm mt-3 bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => setRequesting(true)}>
+                  Get paid now <ArrowRight className="w-4 h-4" />
+                </button>
+              </section>
+            )}
+            {funding.isProspect && !inv.funded_id && isAwaitingAgency(inv.status) && (
+              <p className="text-sm text-slate-500 flex items-start gap-2">
+                <Banknote className="w-4 h-4 mt-0.5 text-emerald-600 flex-shrink-0" />
+                Once the agency approves this invoice, One Source can advance up to 90% of it.
+              </p>
+            )}
+
+            {/* Funding: requesting it, for a client. */}
+            {funding.isActive && !inv.funded_id && (
               <section className="rounded-lg border border-slate-200 p-4">
                 <h3 className="text-sm font-semibold text-slate-700 mb-1 flex items-center gap-2">
                   <Banknote className="w-4 h-4 text-brand-600" /> Funding
@@ -313,7 +366,7 @@ export function InvoiceDrawer({ invoiceId, fundingStatus, onClose }: {
               </section>
             )}
 
-            {canVoid(role) && !['paid', 'void'].includes(inv.status) && (
+            {canVoid(role) && !locked && !['paid', 'void'].includes(inv.status) && (
               <div className="pt-4 border-t border-slate-100">
                 <button className="text-sm text-red-600 hover:underline" onClick={() => void voidInvoice()}>
                   Void this invoice
@@ -332,5 +385,92 @@ export function InvoiceDrawer({ invoiceId, fundingStatus, onClose }: {
         />
       )}
     </div>
+  );
+}
+
+interface FundedAdvance {
+  id: string; status: string; face_amount: string; advance_amount: string; reserve_amount: string;
+  advanced_on: string | null; collected_on: string | null; days_to_recourse: number | null;
+  accrued_fee: string; net_expected: string | null;
+  events: { id: string; event_type: string; amount: string | null; occurred_on: string; memo: string | null }[];
+}
+
+const EVENT_LABEL: Record<string, string> = {
+  advance: 'Advance sent to you',
+  payment_received: 'Agency paid One Source',
+  reserve_release: 'Reserve released to you',
+  chargeback: 'Charged back',
+  direct_payment_reported: 'You reported a direct payment',
+};
+
+/**
+ * The funding side of an invoice One Source funded: what was advanced, what
+ * it has cost so far, what is still to come back, and what happened when.
+ */
+function FundedPanel({ factoredId }: { factoredId: string }) {
+  const { data: a, isLoading } = useQuery<FundedAdvance>({
+    queryKey: ['factoring-invoice', factoredId],
+    queryFn: () => api.get(`/factoring/invoices/${factoredId}`).then((r) => r.data.data),
+  });
+  const badge = a ? fundedBadge(a.status) : null;
+  const open = a ? isFundedOpen(a.status) : false;
+  const events = (a?.events ?? []).filter((e) => e.event_type in EVENT_LABEL);
+
+  return (
+    <section className="rounded-lg border border-brand-200 p-4">
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+          <Banknote className="w-4 h-4 text-brand-600" /> Funding
+        </h3>
+        {badge && <span className={badge.badge}>{badge.label}</span>}
+      </div>
+      {isLoading || !a ? (
+        <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+      ) : (
+        <>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+            <div>
+              <dt className="text-xs text-slate-500">Advanced{a.advanced_on ? ` ${formatDate(a.advanced_on)}` : ''}</dt>
+              <dd className="font-semibold tabular-nums">{formatCurrency(a.advance_amount)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-slate-500">Reserve</dt>
+              <dd className="font-semibold tabular-nums">{formatCurrency(a.reserve_amount)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-slate-500">{open ? 'Fees so far' : 'Fees'}</dt>
+              <dd className="font-semibold tabular-nums">{formatCurrency(a.accrued_fee)}</dd>
+            </div>
+            {a.net_expected !== null && ['advanced', 'collected'].includes(a.status) && (
+              <div>
+                <dt className="text-xs text-slate-500">Still to come to you</dt>
+                <dd className="font-semibold tabular-nums text-green-700">{formatCurrency(a.net_expected)}</dd>
+              </div>
+            )}
+          </dl>
+          {open && a.days_to_recourse !== null && (
+            <p className={`text-xs mt-3 ${a.days_to_recourse <= 14 ? 'text-orange-700' : 'text-slate-500'}`}>
+              {a.days_to_recourse >= 0
+                ? `${a.days_to_recourse} days until recourse if the agency hasn’t paid.`
+                : `Past the recourse date by ${-a.days_to_recourse} days.`}
+            </p>
+          )}
+          {events.length > 0 && (
+            <ol className="mt-4 space-y-1.5 text-sm border-t border-slate-100 pt-3">
+              {[...events].reverse().map((e) => (
+                <li key={e.id} className="flex justify-between gap-3">
+                  <span className="text-slate-700">
+                    {EVENT_LABEL[e.event_type]}
+                    {e.event_type === 'payment_received' && e.memo && <span className="text-slate-400"> · {e.memo}</span>}
+                    <span className="block text-xs text-slate-400">{formatDate(e.occurred_on)}</span>
+                  </span>
+                  {e.amount !== null && <span className="tabular-nums text-slate-700">{formatCurrency(e.amount)}</span>}
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
+      )}
+    </section>
   );
 }

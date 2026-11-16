@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { DOC_TYPE_LABELS, isApprovalDocType, type DocType } from '@constructpm/shared';
 import { api, apiError, formatCurrency } from '../lib/api';
 import { uploadInvoiceDocument } from '../lib/invoices';
+import { ADVANCE_MAX } from '../lib/funding';
 import { FundingOnboardingForm } from './FundingOnboardingForm';
 
 interface Props {
@@ -86,7 +87,7 @@ export function RequestFundingModal({ invoice, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 p-0 sm:p-4">
-      <div role="dialog" aria-modal="true" aria-label="Request funding"
+      <div role="dialog" aria-modal="true" aria-label={!isLoading && !isClient ? 'Get paid now' : 'Request funding'}
            className="card w-full sm:max-w-lg max-h-[90dvh] overflow-y-auto rounded-b-none sm:rounded-lg">
         <div className="flex items-start justify-between gap-3 p-5 border-b border-slate-200">
           <div className="flex items-center gap-3 min-w-0">
@@ -94,7 +95,7 @@ export function RequestFundingModal({ invoice, onClose }: Props) {
               <Banknote className="w-5 h-5 text-brand-600" />
             </div>
             <div className="min-w-0">
-              <h3 className="truncate">Request funding</h3>
+              <h3 className="truncate">{!isLoading && !isClient ? 'Get paid on this invoice' : 'Request funding'}</h3>
               <p className="text-sm text-slate-500 truncate">
                 {invoice.invoice_number} · {formatCurrency(invoice.total)}
               </p>
@@ -214,8 +215,17 @@ export function RequestFundingModal({ invoice, onClose }: Props) {
 
         {/* ── Not a client yet: onboarding enquiry ────────────────────────── */}
         {!isLoading && !isClient && (
-          <div className="p-5">
-            <FundingOnboardingForm invoiceId={invoice.id} onDone={onClose} />
+          <div className="p-5 space-y-4">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+              <p className="text-sm text-slate-600">The agency approved {invoice.invoice_number}. One Source can advance</p>
+              <p className="text-2xl font-bold tabular-nums text-slate-900">
+                up to {formatCurrency(Number(invoice.total) * ADVANCE_MAX)}
+              </p>
+              <p className="text-sm text-slate-600">
+                on it — often the same day — and send the rest, less a fee, when the agency pays.
+              </p>
+            </div>
+            <FundingOnboardingForm invoiceId={invoice.id} onDone={onClose} showIntro={false} />
           </div>
         )}
       </div>

@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { DollarSign, FolderKanban, Clock, TrendingUp, ArrowRight, AlertCircle } from 'lucide-react';
+import { DollarSign, FolderKanban, Clock, TrendingUp, ArrowRight, AlertCircle, Banknote } from 'lucide-react';
 import { api, formatCurrency, formatDate } from '../lib/api';
 import { useAuthStore } from '../stores/auth.store';
 import type { Job, Invoice } from '@constructpm/shared';
 import { invoiceStatusBadge, invoiceStatusLabel } from '../lib/invoices';
+import { useFundingAccount, ADVANCE_MAX } from '../lib/funding';
 
 function StatCard({ label, value, sub, icon: Icon, color }: { label: string; value: string; sub?: string; icon: React.ElementType; color: string }) {
   return (
@@ -31,6 +32,7 @@ const statusColor: Record<string, string> = {
 
 export function DashboardPage() {
   const user = useAuthStore(s => s.user);
+  const funding = useFundingAccount();
 
   const { data: company } = useQuery({
     queryKey: ['company'],
@@ -60,6 +62,7 @@ export function DashboardPage() {
   const openAR = invStats
     .filter((i: Record<string,unknown>) => !['draft', 'void', 'paid'].includes(String(i['status'])))
     .reduce((s: number, i: Record<string,unknown>) => s + Number(i['balance_due'] ?? 0), 0);
+  const approvedBalance = Number(invStats.find((i: Record<string, unknown>) => i['status'] === 'approved')?.['balance_due'] ?? 0);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
@@ -71,6 +74,28 @@ export function DashboardPage() {
           Here&rsquo;s what&rsquo;s happening{company?.name ? ` at ${company.name}` : ''} today
         </p>
       </div>
+
+      {/* The way in, for a company that doesn't factor yet: what its approved
+          invoices could become today. */}
+      {funding.isProspect && approvedBalance > 0 && (
+        <Link to="/funding"
+              className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-emerald-200 bg-gradient-to-r from-emerald-50 to-white p-4 sm:p-5 hover:border-emerald-300">
+          <div className="w-10 h-10 rounded-lg bg-emerald-600 flex items-center justify-center flex-shrink-0">
+            <Banknote className="w-5 h-5 text-white" />
+          </div>
+          <div className="flex-1">
+            <p className="font-semibold text-slate-900">
+              {formatCurrency(approvedBalance)} approved by agencies and not yet paid
+            </p>
+            <p className="text-sm text-slate-600">
+              Get up to {formatCurrency(approvedBalance * ADVANCE_MAX)} of it now with One Source — often the same day.
+            </p>
+          </div>
+          <span className="btn btn-sm bg-emerald-600 text-white self-start sm:self-center">
+            Get paid now <ArrowRight className="w-4 h-4" />
+          </span>
+        </Link>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">

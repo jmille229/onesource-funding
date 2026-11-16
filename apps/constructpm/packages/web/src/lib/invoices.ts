@@ -56,6 +56,17 @@ export function nextAction(status: string, fundedStatus?: string | null): { acti
   return null;
 }
 
+/**
+ * The funded marker on an invoice, from its advance's status: open while the
+ * agency pays One Source, settled after. Null when it was never funded.
+ */
+export function fundedBadge(fundedStatus: string | null | undefined): { label: string; badge: string } | null {
+  if (!fundedStatus) return null;
+  if (fundedStatus === 'charged_back') return { label: 'Funded · charged back', badge: 'badge-red' };
+  if (isFundedOpen(fundedStatus)) return { label: 'Funded', badge: 'badge-green' };
+  return { label: 'Funded · settled', badge: 'badge-gray' };
+}
+
 /** Funding request statuses, as the client sees them. */
 export const FUNDING_LABEL: Record<string, string> = {
   submitted: 'Funding requested', under_review: 'Under review', approved: 'Funded',

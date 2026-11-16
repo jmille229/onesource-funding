@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, AlertTriangle, PiggyBank, Clock, FolderKanban, Send, FileText, Plus } from 'lucide-react';
+import {
+  AlertTriangle, PiggyBank, Clock, FolderKanban, Send, FileText, Plus, CheckCircle2, Zap,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { api, apiError, formatCurrency, formatDate } from '../../lib/api';
 import { factoredInvoiceRef } from '@constructpm/shared';
 import { FundingOnboardingForm } from '../../components/FundingOnboardingForm';
 import { FUNDING_BADGE, FUNDING_LABEL, downloadAttachment } from '../../lib/invoices';
+import { ADVANCE_MAX, ADVANCE_TYPICAL } from '../../lib/funding';
 import { usePortalMode } from '../../components/layout/AppLayout';
 import { ReadyToRequest, SubmitFundingInvoice } from '../../components/SubmitFundingInvoice';
 
@@ -126,32 +129,9 @@ export function FactoringPage() {
     );
   }
 
-  // Not set up for funding yet: explain it in a sentence and offer the way in,
-  // rather than a dead end.
-  if (!summary?.enabled || summary.status !== 'active') {
-    return (
-      <div className="page max-w-3xl mx-auto">
-        <h1>Funding</h1>
-        <p className="text-sm text-slate-500 mt-0.5">
-          Get paid on invoices the agency has approved, instead of waiting 30, 60 or 90+ days.
-        </p>
-        <div className="card p-5 sm:p-6 mt-6">
-          <div className="flex items-start gap-3 mb-5">
-            <div className="w-10 h-10 rounded-lg bg-brand-50 flex items-center justify-center flex-shrink-0">
-              <Banknote className="w-5 h-5 text-brand-600" />
-            </div>
-            <div className="text-sm text-slate-600 space-y-1">
-              <p className="font-medium text-slate-800">How it works</p>
-              <p>Once the agency approves an invoice, request funding from it here. One Source
-                 advances most of its value — typically 80% — and sends the rest, less a fee, when
-                 the agency pays. Tell us where to reach you and we&rsquo;ll take it from there.</p>
-            </div>
-          </div>
-          <FundingOnboardingForm showIntro={false} />
-        </div>
-      </div>
-    );
-  }
+  // Not a client yet: the way in. What their approved invoices could turn into
+  // now, how it works, and a one-step enquiry.
+  if (!summary?.enabled) return <GetPaidNow />;
 
   const rows = advances ?? [];
 
@@ -170,6 +150,13 @@ export function FactoringPage() {
           </button>
         )}
       </div>
+
+      {summary.status !== 'active' && (
+        <div className="card p-4 mb-5 border-slate-200 bg-slate-50 text-sm text-slate-600">
+          Your funding account is paused, so new requests are off for now. Your funded history is below —
+          contact One Source to pick it back up.
+        </div>
+      )}
 
       {submitting && <SubmitFundingInvoice onClose={() => setSubmitting(false)} />}
 
@@ -459,5 +446,78 @@ function FundingRequests({ fundingOnly, onSubmitNew }: { fundingOnly: boolean; o
       )}
     </section>
     </>
+  );
+}
+
+/**
+ * "Get paid now" — the Funding page for a company that doesn't factor yet.
+ * Leads with their own numbers: what the agencies have approved and not paid,
+ * and what One Source could advance on it today.
+ */
+function GetPaidNow() {
+  const { data: invoices = [] } = useQuery<{ status: string; balance_due: string; funded_id: string | null }[]>({
+    queryKey: ['invoices', ''],
+    queryFn: () => api.get('/invoices?status=').then((r) => r.data.data),
+  });
+  const approved = invoices.filter((i) => i.status === 'approved' && Number(i.balance_due) > 0 && !i.funded_id);
+  const approvedTotal = approved.reduce((s, i) => s + Number(i.balance_due), 0);
+  const waiting = invoices.filter((i) => ['sent', 'viewed', 'overdue'].includes(i.status))
+    .reduce((s, i) => s + Number(i.balance_due), 0);
+
+  return (
+    <div className="page max-w-4xl mx-auto">
+      <h1>Get paid now</h1>
+      <p className="text-sm text-slate-500 mt-0.5">
+        Stop waiting 30, 60 or 90+ days on agencies. One Source advances up to 90% of an approved invoice,
+        often the same day.
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
+        <div className="card p-5 border-emerald-200 bg-emerald-50">
+          <p className="text-xs font-medium uppercase tracking-wide text-emerald-800">Approved, waiting on the agency</p>
+          <p className="text-2xl font-bold tabular-nums mt-1">{formatCurrency(approvedTotal)}</p>
+          <p className="text-sm text-slate-700 mt-1">
+            {approvedTotal > 0
+              ? <>Up to <strong className="tabular-nums">{formatCurrency(approvedTotal * ADVANCE_MAX)}</strong> could be in your account now
+                 ({approved.length} invoice{approved.length === 1 ? '' : 's'}).</>
+              : 'Mark invoices approved in Invoices as agencies approve them, and they show up here.'}
+          </p>
+        </div>
+        <div className="card p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Submitted, awaiting approval</p>
+          <p className="text-2xl font-bold tabular-nums mt-1">{formatCurrency(waiting)}</p>
+          <p className="text-sm text-slate-600 mt-1">Eligible once the agency approves it.</p>
+        </div>
+      </div>
+
+      <div className="card p-5 sm:p-6 mt-4">
+        <p className="font-semibold text-slate-900 mb-3">How it works</p>
+        <ol className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm text-slate-600">
+          <li className="flex gap-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+            <span><strong className="text-slate-800">The agency approves your invoice.</strong> You keep tracking it here, exactly as now.</span>
+          </li>
+          <li className="flex gap-2">
+            <Zap className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+            <span><strong className="text-slate-800">Request funding from the invoice.</strong> One Source advances
+              {' '}{Math.round(ADVANCE_TYPICAL * 100)}–{Math.round(ADVANCE_MAX * 100)}%, often the same day.</span>
+          </li>
+          <li className="flex gap-2">
+            <PiggyBank className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+            <span><strong className="text-slate-800">The agency pays One Source.</strong> You get the rest,
+              less a fee, and the invoice is marked paid for you.</span>
+          </li>
+        </ol>
+        <p className="text-xs text-slate-500 mt-4">
+          You choose invoice by invoice. Anything you don&rsquo;t fund stays exactly as it is.
+        </p>
+      </div>
+
+      <div className="card p-5 sm:p-6 mt-4">
+        <p className="font-semibold text-slate-900">Set up funding</p>
+        <p className="text-sm text-slate-500 mt-0.5 mb-4">Tell us where to reach you. No commitment.</p>
+        <FundingOnboardingForm showIntro={false} />
+      </div>
+    </div>
   );
 }

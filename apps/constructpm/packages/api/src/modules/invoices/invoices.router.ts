@@ -38,7 +38,9 @@ const lineSchema = z.object({
 });
 
 const createSchema = z.object({
-  job_id: z.string().uuid(),
+  /** Optional: file it under a job, or just note the contract/PO it bills. */
+  job_id: z.string().uuid().optional().nullable(),
+  contract_reference: z.string().trim().max(100).optional().nullable(),
   customer_id: z.string().uuid(),
   /** The contractor's own invoice number. Blank → one is assigned. */
   invoice_number: z.string().trim().max(50).optional().nullable(),
@@ -85,7 +87,14 @@ const paymentSchema = z.object({
  * 'pending' / 'advanced' mean the agency now pays One Source, not the client.
  */
 const FUNDED_STATUS = `(SELECT fi.status::text FROM factored_invoices fi
-                         WHERE fi.invoice_id = i.id ORDER BY fi.created_at DESC LIMIT 1) AS funded_status`;
+                         WHERE fi.invoice_id = i.id ORDER BY fi.created_at DESC LIMIT 1) AS funded_status,
+                       (SELECT fi.id FROM factored_invoices fi
+                         WHERE fi.invoice_id = i.id ORDER BY fi.created_at DESC LIMIT 1) AS funded_id,
+                       (SELECT fi.advanced_on FROM factored_invoices fi
+                         WHERE fi.invoice_id = i.id ORDER BY fi.created_at DESC LIMIT 1) AS funded_on`;
+
+/** Funded invoices are locked: the advance was made on these details. */
+const LOCKED = 'This invoice is funded by One Source, so its amount, agency and invoice number are locked.';
 
 const conflict = (message: string) => Object.assign(new Error(message), { status: 409 });
 
@@ -97,7 +106,8 @@ invoicesRouter.get('/', asyncHandler(async (req, res) => {
   const conds = ['i.deleted_at IS NULL'];
   if (job_id) { params.push(job_id); conds.push(`i.job_id=$${params.length}`); }
   if (status) { params.push(status); conds.push(`i.status=$${params.length}`); }
-  params.push(parsePagination(req.query).limit);
+  // A factoring client's list includes their whole funded history.
+  params.push(parsePagination(req.query, { defaultPerPage: 1000, maxPerPage: 2000 }).limit);
   const r = await db.query(
     `SELECT i.*, c.name customer_name, j.name job_name, j.job_number, ${FUNDED_STATUS},
             -- How many documents are on file, and whether any is proof of approval.
@@ -162,13 +172,14 @@ invoicesRouter.post('/', requireRole('owner','admin','project_manager','accounta
       `INSERT INTO invoices
          (company_id,job_id,customer_id,invoice_number,status,issue_date,due_date,
           subtotal,tax_rate,tax_amount,total,paid_amount,balance_due,notes,created_by,
-          submitted_on,submission_method,agency_reference,sent_at)
+          submitted_on,submission_method,agency_reference,sent_at,contract_reference)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,0,$11,$12,$13,$14,$15,$16,
-               CASE WHEN $5::invoice_status='sent' THEN NOW() END)
+               CASE WHEN $5::invoice_status='sent' THEN NOW() END,$17)
        RETURNING id`,
-      [req.auth.companyId, body.job_id, body.customer_id, num, body.status, issueDate, dueDate,
+      [req.auth.companyId, body.job_id ?? null, body.customer_id, num, body.status, issueDate, dueDate,
        subtotal.toFixed(2), body.tax_rate, taxAmt.toFixed(2), total.toFixed(2), body.notes ?? null,
-       req.auth.userId, submittedOn, body.submission_method ?? null, body.agency_reference ?? null]);
+       req.auth.userId, submittedOn, body.submission_method ?? null, body.agency_reference ?? null,
+       body.contract_reference || null]);
     const invId = r.rows[0]!.id;
     for (let i = 0; i < items.length; i++) {
       const item = items[i]!;
@@ -319,6 +330,8 @@ invoicesRouter.patch('/:id/void', requireRole('owner','admin'), asyncHandler(asy
       `SELECT 1 FROM funding_requests WHERE invoice_id=$1 AND status IN ('submitted','under_review','approved')`,
       [req.params['id']]);
     if (open.rows[0]) throw conflict('This invoice has an open funding request. Withdraw the request before voiding it.');
+    const funded = await c.query(`SELECT 1 FROM factored_invoices WHERE invoice_id=$1 LIMIT 1`, [req.params['id']]);
+    if (funded.rows[0]) throw Object.assign(new Error(`${LOCKED} It can't be voided.`), { status: 409, code: 'funded_invoice' });
     const r = await c.query(
       `UPDATE invoices SET status='void',updated_at=NOW()
         WHERE id=$1 AND deleted_at IS NULL AND status NOT IN ('paid','void') RETURNING *`, [req.params['id']]);
