@@ -270,7 +270,11 @@ export interface InvoiceLineItem {
 }
 
 export interface Invoice extends Base {
-  job_id: string;
+  /** Optional: an invoice can be filed under a job, or just a contract/PO. */
+  job_id: string | null;
+  contract_reference?: string | null;
+  /** 'one_source' when created from an advance on the funding ledger. */
+  source?: 'client' | 'one_source';
   customer_id: string;
   customer_name?: string | null;
   invoice_number: string;

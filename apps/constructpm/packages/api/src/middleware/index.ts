@@ -227,6 +227,12 @@ export function asyncHandler(fn: (req: Request, res: Response, next: NextFunctio
 
 // ─── Error handler ────────────────────────────────────────────────────────────
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
+  // The database's lock on funded invoices (V017), if a write ever gets past
+  // the route's own check: a conflict to explain, not a server fault.
+  if ((err as { hint?: string }).hint === 'funded_invoice_locked') {
+    err = Object.assign(new Error('This invoice is funded by One Source, so its amount, agency and invoice number are locked.'),
+      { status: 409, code: 'funded_invoice' });
+  }
   const message = err instanceof Error ? err.message : 'Internal server error';
   const status = (err as { status?: number }).status ?? 500;
   // A machine-readable reason a client can branch on (e.g. 'funded_invoice').
