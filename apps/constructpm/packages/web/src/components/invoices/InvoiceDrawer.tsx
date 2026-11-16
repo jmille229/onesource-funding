@@ -15,6 +15,7 @@ import {
   canVoid, FUNDING_BADGE, FUNDING_LABEL, daysSince, isFundedOpen, fundedBadge,
 } from '../../lib/invoices';
 import { useFundingAccount, ADVANCE_MAX } from '../../lib/funding';
+import { useWorkspace } from '../layout/AppLayout';
 import { InvoiceActionModal, type ActionInvoice } from './InvoiceActionModal';
 import { RequestFundingModal } from '../RequestFundingModal';
 
@@ -42,6 +43,7 @@ export function InvoiceDrawer({ invoiceId, fundingStatus, onClose }: {
   const qc = useQueryClient();
   const role = useAuthStore((s) => s.user?.role);
   const funding = useFundingAccount();
+  const projectTools = useWorkspace()?.projectTools ?? false;
   const closeRef = useRef<HTMLButtonElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [action, setAction] = useState<InvoiceAction | null>(null);
@@ -148,9 +150,9 @@ export function InvoiceDrawer({ invoiceId, fundingStatus, onClose }: {
               </div>
               <span className={invoiceStatusBadge(inv.status)}>{invoiceStatusLabel(inv.status)}</span>
             </div>
-            {(inv.job_name || inv.contract_reference) && (
+            {((projectTools && inv.job_name) || inv.contract_reference) && (
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                {inv.job_name && (
+                {projectTools && inv.job_name && (
                   <Link to={`/jobs/${inv.job_id}`} className="text-brand-600 hover:underline inline-flex items-center gap-1">
                     <FolderKanban className="w-4 h-4" /> {inv.job_number} — {inv.job_name}
                   </Link>
