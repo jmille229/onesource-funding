@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import { useAuthStore } from './stores/auth.store';
-import { AppLayout, usePortalMode } from './components/layout/AppLayout';
+import { AppLayout, useWorkspace } from './components/layout/AppLayout';
 import { LoginPage } from './pages/auth/LoginPage';
 import { RegisterPage } from './pages/auth/RegisterPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -37,9 +37,9 @@ const queryClient = new QueryClient({
 
 /** Funding-only clients land on Funding; everyone else on the dashboard. */
 function HomeRedirect() {
-  const mode = usePortalMode();
-  if (mode === null) return null;
-  return <Navigate to={mode === 'funding' ? '/funding' : '/dashboard'} replace />;
+  const ws = useWorkspace();
+  if (ws === null) return null;
+  return <Navigate to={ws.projectTools ? '/dashboard' : '/invoices'} replace />;
 }
 
 function RequireAuth({ children }: { children: React.ReactNode }) {

@@ -6,6 +6,7 @@ import { notify, OPS_INBOX } from '../../lib/mailer.js';
 import { asyncHandler, requireRole, validate } from '../../middleware/index.js';
 import { exposureLimit, type UnderwritingPolicy } from './underwriting.js';
 import { scoreRequestInBackground } from './underwriting.service.js';
+import { fundingInsights, fundingStatement } from '../../lib/funding-reports.js';
 import { APPROVAL_DOC_TYPES, DOC_TYPE_LABELS, type DocType } from '@constructpm/shared';
 import type pg from 'pg';
 
@@ -107,98 +108,7 @@ factoringRouter.get('/approval-requirement',
     res.json({ data: client.rows[0] ? r : { ...r, accepted: null, instructions: null, satisfied: true } });
   }));
 
-// ─── Funding-only clients (onboarded through apply.os-funding.com) ────────────
-
-/**
- * POST /api/factoring/funding-invoices — the one-screen "submit an invoice
- * for funding".
- *
- * A client who came for funding shouldn't have to set up a job and an invoice
- * first. This creates what the tracker needs behind the scenes — the agency
- * as a contact, one job per contract (reused for every later invoice on it),
- * and the invoice already marked approved by the agency — and returns the
- * invoice. The client then attaches proof of approval and requests funding
- * exactly as any other approved invoice.
- */
-const fundingInvoiceSchema = z.object({
-  agency_name: z.string().trim().min(2).max(200),
-  contract_number: z.string().trim().max(60).optional().nullable(),
-  invoice_number: z.string().trim().min(1).max(50),
-  amount: z.number().positive().max(1e9),
-  submitted_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
-  approved_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
-});
-
-factoringRouter.post('/funding-invoices', requireRole(...FINANCE_ROLES), validate(fundingInvoiceSchema),
-  asyncHandler(async (req, res) => {
-    const b = req.body as z.infer<typeof fundingInvoiceSchema>;
-    const invoice = await withTransaction(req.auth.companyId, async (c) => {
-      const client = await c.query(`SELECT 1 FROM factoring_clients WHERE status = 'active'`);
-      if (!client.rows[0]) {
-        throw Object.assign(new Error('This account is not set up for funding yet'), { status: 409 });
-      }
-      const dup = await c.query(
-        `SELECT 1 FROM invoices WHERE LOWER(invoice_number) = LOWER($1) AND deleted_at IS NULL AND status <> 'void'`,
-        [b.invoice_number]);
-      if (dup.rows[0]) {
-        throw Object.assign(new Error(`Invoice ${b.invoice_number} is already in your account`), { status: 409 });
-      }
-
-      // The agency, as a customer contact.
-      let contact = await c.query<{ id: string }>(
-        `SELECT id FROM contacts WHERE LOWER(BTRIM(name)) = LOWER(BTRIM($1))
-            AND type IN ('customer','both') AND deleted_at IS NULL LIMIT 1`, [b.agency_name]);
-      if (!contact.rows[0]) {
-        contact = await c.query<{ id: string }>(
-          `INSERT INTO contacts (company_id, name, type) VALUES ($1,$2,'customer') RETURNING id`,
-          [req.auth.companyId, b.agency_name]);
-      }
-      const customerId = contact.rows[0]!.id;
-
-      // One job per contract (or one per agency when there's no contract number).
-      const jobName = b.contract_number ? `${b.agency_name} · ${b.contract_number}` : `${b.agency_name} — funded invoices`;
-      let job = await c.query<{ id: string }>(
-        `SELECT id FROM jobs WHERE customer_id = $1 AND deleted_at IS NULL
-            AND (name = $3 OR ($2::text IS NOT NULL AND job_number = $2))
-          ORDER BY (name = $3) DESC LIMIT 1`, [customerId, b.contract_number || null, jobName]);
-      if (!job.rows[0]) {
-        let num = b.contract_number || null;
-        if (num) {
-          const taken = await c.query(`SELECT 1 FROM jobs WHERE job_number = $1`, [num]);
-          if (taken.rows[0]) num = null;
-        }
-        if (!num) {
-          const n = await c.query<{ next: string }>(
-            `SELECT COALESCE(MAX(NULLIF(regexp_replace(job_number, '^JOB-', ''), job_number)::int), 0) + 1 AS next
-               FROM jobs WHERE job_number ~ '^JOB-[0-9]+$'`);
-          num = `JOB-${String(n.rows[0]?.next ?? 1).padStart(4, '0')}`;
-        }
-        job = await c.query<{ id: string }>(
-          `INSERT INTO jobs (company_id, name, job_number, status, customer_id, created_by)
-           VALUES ($1,$2,$3,'active',$4,$5) RETURNING id`,
-          [req.auth.companyId, jobName, num, customerId, req.auth.userId]);
-        await c.query(
-          `INSERT INTO budgets (company_id, job_id, name, status, created_by) VALUES ($1,$2,'Primary Budget','active',$3)`,
-          [req.auth.companyId, job.rows[0]!.id, req.auth.userId]);
-      }
-
-      const submitted = b.submitted_on ?? b.approved_on;
-      const due = b.due_date
-        ?? new Date(Date.parse(`${submitted}T00:00:00Z`) + 30 * 86400_000).toISOString().slice(0, 10);
-      const inv = await c.query(
-        `INSERT INTO invoices
-           (company_id, job_id, customer_id, invoice_number, status, issue_date, due_date,
-            subtotal, tax_rate, tax_amount, total, paid_amount, balance_due, created_by,
-            submitted_on, approved_on, sent_at)
-         VALUES ($1,$2,$3,$4,'approved',$5,$6,$7,0,0,$7,0,$7,$8,$5,$9,NOW())
-         RETURNING id, invoice_number, total, balance_due, status`,
-        [req.auth.companyId, job.rows[0]!.id, customerId, b.invoice_number, submitted, due,
-         b.amount.toFixed(2), req.auth.userId, b.approved_on]);
-      return { ...inv.rows[0], customer_name: b.agency_name, job_id: job.rows[0]!.id };
-    });
-    res.status(201).json({ data: invoice });
-  }));
+// ─── Clients onboarded through apply.os-funding.com ──────────────────────────
 
 /** GET /api/factoring/onboarding-documents — what the client provided when they applied. */
 factoringRouter.get('/onboarding-documents', requireRole(...FINANCE_ROLES), asyncHandler(async (req, res) => {
@@ -301,6 +211,34 @@ factoringRouter.get('/invoices', requireRole(...FINANCE_ROLES), asyncHandler(asy
     `${INVOICE_SELECT} ${filter} ORDER BY fi.advanced_on DESC NULLS FIRST, fi.created_at DESC LIMIT $1`,
     [parsePagination(req.query, { defaultPerPage: 500, maxPerPage: 1000 }).limit]);
   res.json({ data: r.rows });
+}));
+
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * GET /api/factoring/statement?from=YYYY-MM-DD&to=YYYY-MM-DD — everything that
+ * happened on the client's funding in a period (default: this month so far),
+ * with totals and what was still open at the end of it.
+ */
+factoringRouter.get('/statement', requireRole(...FINANCE_ROLES), asyncHandler(async (req, res) => {
+  const q = z.object({ from: isoDay.optional(), to: isoDay.optional() }).safeParse(req.query);
+  if (!q.success) {
+    res.status(400).json({ error: 'request_error', message: 'Use dates as YYYY-MM-DD' });
+    return;
+  }
+  const to = q.data.to ?? todayISO();
+  const from = q.data.from ?? `${to.slice(0, 7)}-01`;
+  if (from > to) {
+    res.status(400).json({ error: 'request_error', message: 'The start date is after the end date' });
+    return;
+  }
+  res.json({ data: await fundingStatement(createRlsClient(readPool, req.auth.companyId), from, to) });
+}));
+
+/** GET /api/factoring/insights — volume, cost and how each agency pays. */
+factoringRouter.get('/insights', requireRole(...FINANCE_ROLES), asyncHandler(async (req, res) => {
+  res.json({ data: await fundingInsights(createRlsClient(readPool, req.auth.companyId), todayISO()) });
 }));
 
 /** GET /api/factoring/invoices/:id — detail plus its event history. */

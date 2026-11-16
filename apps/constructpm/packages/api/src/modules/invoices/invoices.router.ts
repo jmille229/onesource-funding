@@ -44,10 +44,15 @@ const createSchema = z.object({
   customer_id: z.string().uuid(),
   /** The contractor's own invoice number. Blank → one is assigned. */
   invoice_number: z.string().trim().max(50).optional().nullable(),
-  /** Logged after the fact ('sent', the default) or before submitting ('draft'). */
-  status: z.enum(['draft', 'sent']).default('sent'),
+  /**
+   * Where it is with the agency: not submitted ('draft'), submitted ('sent',
+   * the default), or already approved ('approved' — e.g. logged in order to
+   * fund it).
+   */
+  status: z.enum(['draft', 'sent', 'approved']).default('sent'),
   issue_date: isoDate.optional(),
   submitted_on: isoDate.optional().nullable(),
+  approved_on: isoDate.optional().nullable(),
   submission_method: z.enum(SUBMISSION_METHODS).optional().nullable(),
   agency_reference: z.string().trim().max(100).optional().nullable(),
   due_date: isoDate.optional().nullable(),
@@ -149,8 +154,13 @@ invoicesRouter.get('/:id', asyncHandler(async (req, res) => {
 
 invoicesRouter.post('/', requireRole('owner','admin','project_manager','accountant'), validate(createSchema), asyncHandler(async (req, res) => {
   const body = req.body as z.infer<typeof createSchema>;
-  const issueDate = body.issue_date ?? body.submitted_on ?? today();
-  const submittedOn = body.status === 'sent' ? (body.submitted_on ?? issueDate) : null;
+  const approvedOn = body.status === 'approved' ? (body.approved_on ?? today()) : null;
+  const issueDate = body.issue_date ?? body.submitted_on ?? approvedOn ?? today();
+  // Approved means it was submitted, no later than the approval.
+  const submittedOn = body.status === 'draft' ? null : (body.submitted_on ?? approvedOn ?? issueDate);
+  if (approvedOn && submittedOn && submittedOn > approvedOn) {
+    throw Object.assign(new Error('The approval date is before the date it was submitted'), { status: 422 });
+  }
   // Due date isn't something the contractor always knows; default to 30 days
   // after submission so aging still has an anchor.
   const dueDate = body.due_date
@@ -158,6 +168,14 @@ invoicesRouter.post('/', requireRole('owner','admin','project_manager','accounta
 
   const id = await withTransaction(req.auth.companyId, async (client) => {
     let num = body.invoice_number?.trim() || null;
+    if (num) {
+      // The same invoice twice would track (and could fund) it twice.
+      const dup = await client.query(
+        `SELECT invoice_number FROM invoices
+          WHERE invoice_number_key(invoice_number) = invoice_number_key($1) AND deleted_at IS NULL AND status <> 'void'
+          LIMIT 1`, [num]);
+      if (dup.rows[0]) throw conflict(`Invoice ${dup.rows[0]['invoice_number']} is already logged`);
+    }
     if (!num) {
       const cnt = await client.query<{ count: string }>(`SELECT COUNT(*)+1 count FROM invoices WHERE company_id=$1`, [req.auth.companyId]);
       num = `INV-${String(parseInt(cnt.rows[0]?.count ?? '1')).padStart(4, '0')}`;
@@ -172,14 +190,14 @@ invoicesRouter.post('/', requireRole('owner','admin','project_manager','accounta
       `INSERT INTO invoices
          (company_id,job_id,customer_id,invoice_number,status,issue_date,due_date,
           subtotal,tax_rate,tax_amount,total,paid_amount,balance_due,notes,created_by,
-          submitted_on,submission_method,agency_reference,sent_at,contract_reference)
+          submitted_on,submission_method,agency_reference,sent_at,contract_reference,approved_on)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,0,$11,$12,$13,$14,$15,$16,
-               CASE WHEN $5::invoice_status='sent' THEN NOW() END,$17)
+               CASE WHEN $5::invoice_status<>'draft' THEN NOW() END,$17,$18)
        RETURNING id`,
       [req.auth.companyId, body.job_id ?? null, body.customer_id, num, body.status, issueDate, dueDate,
        subtotal.toFixed(2), body.tax_rate, taxAmt.toFixed(2), total.toFixed(2), body.notes ?? null,
        req.auth.userId, submittedOn, body.submission_method ?? null, body.agency_reference ?? null,
-       body.contract_reference || null]);
+       body.contract_reference || null, approvedOn]);
     const invId = r.rows[0]!.id;
     for (let i = 0; i < items.length; i++) {
       const item = items[i]!;

@@ -23,3 +23,22 @@ export async function downloadVia(client: AxiosInstance, path: string, fallbackN
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/**
+ * Save rows as a CSV the way Excel expects: UTF-8 with a BOM (agency names
+ * carry dashes and accents), CRLF lines, and any cell that starts like a
+ * formula (= + - @) neutralised so a spreadsheet never runs it.
+ */
+export function downloadCsv(filename: string, header: string[], rows: (string | number | null | undefined)[][]) {
+  const cell = (v: string | number | null | undefined) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    const safe = /^[=+\-@]/.test(s) && !/^-?\d/.test(s) ? `'${s}` : s;
+    return /[",\n\r]/.test(safe) || safe !== s ? `"${safe.replace(/"/g, '""')}"` : safe;
+  };
+  const csv = [header, ...rows].map((line) => line.map(cell).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

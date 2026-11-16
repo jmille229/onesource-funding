@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Plus, FileText, Search, Banknote, Paperclip, Lock, ArrowRight, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { api, formatCurrency, formatDate } from '../../lib/api';
@@ -76,7 +76,12 @@ export function InvoicesPage() {
   const [fundingFor, setFundingFor] = useState<InvoiceRow | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [view, setView] = useState<FundingView>('all');
+  // ?view=eligible etc., so the Funding page can link straight to a view.
+  const [params] = useSearchParams();
+  const [view, setView] = useState<FundingView>(() => {
+    const v = params.get('view');
+    return v === 'funded' || v === 'not_funded' || v === 'eligible' ? v : 'all';
+  });
   const [bannerHidden, setBannerHidden] = useState(() => dismissedRecently('get-paid-banner', 14));
 
   // Which invoices already have a funding request, so the row shows its status

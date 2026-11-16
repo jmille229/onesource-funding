@@ -25,9 +25,12 @@ const companySettingsSchema = z.object({
   po_prefix:               z.string().max(16).optional(),
   co_prefix:               z.string().max(16).optional(),
   pay_app_prefix:          z.string().max(16).optional(),
-  // 'funding': a client onboarded through apply.os-funding.com sees their
-  // funding only; 'full' turns on the project and invoice tools.
+  // 'funding': the company came through One Source (set when it is
+  // onboarded): One Source branding, and the project tools start off.
   portal_mode:             z.enum(['full', 'funding']).optional(),
+  // Jobs, budgets, the project dashboard and reports. Unset = the default
+  // for the company (off for One Source clients, on for everyone else).
+  project_tools:           z.boolean().optional(),
 }).strict();
 
 // GET /api/settings/company

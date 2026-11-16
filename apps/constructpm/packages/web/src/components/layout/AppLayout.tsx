@@ -12,25 +12,46 @@ import { useFundingAccount } from '../../lib/funding';
 import logo from '../../assets/onesource-logo.png';
 import { clsx } from 'clsx';
 
+export interface Workspace {
+  /** Jobs, budgets, the project dashboard and reports. */
+  projectTools: boolean;
+  /** Whose name is on the app: One Source for clients it onboarded. */
+  brand: 'onesource' | 'constructpm';
+}
+
 /**
- * 'funding' — a client onboarded through apply.os-funding.com, who came for
- * funding and not the project tools: they see Funding only, branded One
- * Source. 'full' is everyone else. null while it loads.
+ * How this company's app is set up. null while it loads.
+ *
+ * There is one app: invoices, with funding layered on for companies that
+ * factor. `portal_mode: 'funding'` — set when One Source onboards a client —
+ * once meant a separate funding-only app; it now means the company came
+ * through One Source: One Source branding, and the project tools start off.
+ * `project_tools` overrides that default either way.
  */
-export function usePortalMode(): 'funding' | 'full' | null {
+export function useWorkspace(): Workspace | null {
   const user = useAuthStore((s) => s.user);
   const { data, isError } = useQuery({
     queryKey: ['company-settings', user?.company_id],
-    queryFn: () => api.get('/settings/company').then((r) => r.data.data as { settings?: { portal_mode?: string } }),
+    queryFn: () => api.get('/settings/company').then((r) => r.data.data as {
+      settings?: { portal_mode?: string; project_tools?: boolean };
+    }),
     enabled: Boolean(user),
     staleTime: 5 * 60_000,
   });
-  if (isError) return 'full';
+  if (isError) return { projectTools: true, brand: 'constructpm' };
   if (!data) return null;
-  return data.settings?.portal_mode === 'funding' ? 'funding' : 'full';
+  const viaOneSource = data.settings?.portal_mode === 'funding';
+  return {
+    projectTools: data.settings?.project_tools ?? !viaOneSource,
+    brand: viaOneSource ? 'onesource' : 'constructpm',
+  };
 }
 
-const nav = [
+/** Screens that belong to the project tools. */
+const PROJECT_PATHS = ['/dashboard', '/jobs', '/reports'];
+export const isProjectPath = (path: string) => PROJECT_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
+
+const nav: { to: string; icon: typeof FileText; label: string; roles?: string[] }[] = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/jobs',      icon: FolderKanban,    label: 'Jobs' },
   { to: '/invoices',  icon: FileText,        label: 'Invoices' },
@@ -44,8 +65,6 @@ const nav = [
     roles: ['owner', 'admin', 'accountant'] },
 ];
 
-const fundingNav = nav.filter((n) => n.to === '/funding');
-
 /** One Source's logo on a white tile, so it reads on the dark sidebar. */
 function OneSourceMark({ compact }: { compact?: boolean }) {
   return (
@@ -55,19 +74,19 @@ function OneSourceMark({ compact }: { compact?: boolean }) {
   );
 }
 
-/** Funding-only clients can switch the project and invoice tools on themselves. */
+/** A company with the project tools off can switch them on itself. */
 function TurnOnTools() {
   const user = useAuthStore((s) => s.user);
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   if (!['owner', 'admin'].includes(user?.role ?? '')) return null;
   const turnOn = async () => {
-    if (!window.confirm('Turn on jobs, invoices, contacts and reports for your team? You can keep using Funding exactly as you do now.')) return;
+    if (!window.confirm('Turn on jobs, budgets, a project dashboard and reports for your team? Invoices and Funding stay exactly as they are.')) return;
     setBusy(true);
     try {
-      await api.patch('/settings/company', { settings: { portal_mode: 'full' } });
+      await api.patch('/settings/company', { settings: { project_tools: true } });
       await qc.invalidateQueries({ queryKey: ['company-settings'] });
-      toast.success('Project and invoice tools are on');
+      toast.success('Project tools are on');
     } catch (e) {
       toast.error(apiError(e, 'Couldn’t turn them on'));
     } finally {
@@ -76,30 +95,32 @@ function TurnOnTools() {
   };
   return (
     <div className="mx-3 mb-3 rounded-md border border-slate-700 p-3">
-      <p className="text-xs text-slate-300">Want to track jobs and invoices here too?</p>
+      <p className="text-xs text-slate-300">Run projects too? Track jobs, budgets and costs here.</p>
       <button onClick={() => void turnOn()} disabled={busy}
               className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-white hover:underline disabled:opacity-50">
-        <LayoutGrid className="w-3.5 h-3.5" /> Turn on project &amp; invoice tools
+        <LayoutGrid className="w-3.5 h-3.5" /> Turn on project tools
       </button>
     </div>
   );
 }
 
 /** Sidebar contents — identical in the fixed desktop rail and the mobile drawer. */
-function SidebarContent({ onNavigate, mode }: { onNavigate?: () => void; mode: 'funding' | 'full' | null }) {
+function SidebarContent({ onNavigate, ws }: { onNavigate?: () => void; ws: Workspace | null }) {
   const { user, logout } = useAuthStore();
   const funding = useFundingAccount();
   // Funding is part of the product only for a company that factors. Everyone
   // else sees the way in instead, and nothing while that's being worked out.
-  const items = (mode === 'funding' ? fundingNav : nav)
-    .filter((n) => n.to !== '/funding' || mode === 'funding' || funding.isClient || funding.isProspect)
-    .map((n) => (n.to === '/funding' && mode !== 'funding' && !funding.isClient
+  // The project screens show only with the project tools on.
+  const items = nav
+    .filter((n) => !isProjectPath(n.to) || ws?.projectTools)
+    .filter((n) => n.to !== '/funding' || funding.isClient || funding.isProspect)
+    .map((n) => (n.to === '/funding' && !funding.isClient
       ? { ...n, label: 'Get paid now', invite: true } : { ...n, invite: false }));
 
   return (
     <>
       <div className="flex items-center gap-2.5 px-5 h-16 border-b border-slate-700 flex-shrink-0">
-        {mode === 'funding' ? <OneSourceMark /> : (
+        {ws?.brand === 'onesource' ? <OneSourceMark /> : (
           <>
             <div className="w-8 h-8 rounded bg-brand-600 flex items-center justify-center flex-shrink-0">
               <HardHat className="w-5 h-5 text-white" />
@@ -110,7 +131,7 @@ function SidebarContent({ onNavigate, mode }: { onNavigate?: () => void; mode: '
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        {mode !== null && items
+        {ws !== null && items
           .filter((item) => !item.roles || (user?.role && item.roles.includes(user.role)))
           .map(({ to, icon: Icon, label, invite }) => (
           <NavLink
@@ -138,7 +159,7 @@ function SidebarContent({ onNavigate, mode }: { onNavigate?: () => void; mode: '
         ))}
       </nav>
 
-      {mode === 'funding' && <TurnOnTools />}
+      {ws && !ws.projectTools && <TurnOnTools />}
 
       <div className="px-3 py-4 border-t border-slate-700 flex-shrink-0">
         <div className="flex items-center gap-3 px-3 py-2 rounded-md">
@@ -173,7 +194,7 @@ export function AppLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
   const closeRef = useRef<HTMLButtonElement>(null);
-  const mode = usePortalMode();
+  const ws = useWorkspace();
 
   // Close on navigation so tapping a link doesn't leave the drawer over the page.
   useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
@@ -199,7 +220,7 @@ export function AppLayout() {
       {/* Desktop rail — only from lg up. Below that it ate 240px of a 390px
           screen, which is what made every list page unreadable. */}
       <aside className="hidden lg:flex w-60 flex-col bg-slate-900 text-white flex-shrink-0">
-        <SidebarContent mode={mode} />
+        <SidebarContent ws={ws} />
       </aside>
 
       {/* Mobile drawer */}
@@ -225,7 +246,7 @@ export function AppLayout() {
             >
               <X className="w-5 h-5" />
             </button>
-            <SidebarContent mode={mode} onNavigate={() => setDrawerOpen(false)} />
+            <SidebarContent ws={ws} onNavigate={() => setDrawerOpen(false)} />
           </aside>
         </div>
       )}
@@ -242,7 +263,7 @@ export function AppLayout() {
           >
             <Menu className="w-5 h-5" />
           </button>
-          {mode === 'funding' ? <OneSourceMark compact /> : (
+          {ws?.brand === 'onesource' ? <OneSourceMark compact /> : (
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded bg-brand-600 flex items-center justify-center">
                 <HardHat className="w-4 h-4 text-white" />
@@ -253,11 +274,11 @@ export function AppLayout() {
         </header>
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden">
-          {/* Funding-only: every other screen leads back to Funding. */}
-          {mode === null
+          {/* Project tools off: their screens lead to Invoices, the home screen. */}
+          {ws === null
             ? <div className="p-10 flex justify-center"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-slate-400" /></div>
-            : mode === 'funding' && !location.pathname.startsWith('/funding')
-              ? <Navigate to="/funding" replace />
+            : !ws.projectTools && isProjectPath(location.pathname)
+              ? <Navigate to="/invoices" replace />
               : <Outlet />}
         </main>
       </div>
