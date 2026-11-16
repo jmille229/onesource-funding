@@ -12,6 +12,7 @@ import {
 } from '../../lib/invoices';
 import { useFundingAccount, ADVANCE_MAX, dismiss, dismissedRecently } from '../../lib/funding';
 import { LogInvoiceModal } from '../../components/invoices/LogInvoiceModal';
+import { useWorkspace } from '../../components/layout/AppLayout';
 import { InvoiceDrawer } from '../../components/invoices/InvoiceDrawer';
 import { InvoiceActionModal, type ActionInvoice } from '../../components/invoices/InvoiceActionModal';
 import { RequestFundingModal } from '../../components/RequestFundingModal';
@@ -70,14 +71,19 @@ function stageNote(inv: InvoiceRow): string {
 export function InvoicesPage() {
   const role = useAuthStore((s) => s.user?.role);
   const funding = useFundingAccount();
+  // Jobs are a project-tools idea: with them off, an invoice shows its contract.
+  const projectTools = useWorkspace()?.projectTools ?? false;
   const [showNew, setShowNew] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [quick, setQuick] = useState<{ invoice: InvoiceRow; action: InvoiceAction } | null>(null);
   const [fundingFor, setFundingFor] = useState<InvoiceRow | null>(null);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  // ?view=eligible etc., so the Funding page can link straight to a view.
+
+  // ?view=eligible and ?status=returned etc., so the dashboard and the
+  // Funding page can link straight to a filtered list.
   const [params] = useSearchParams();
+  const [statusFilter, setStatusFilter] = useState(() =>
+    STATUS_FILTERS.some((f) => f.value === params.get('status')) ? params.get('status')! : '');
   const [view, setView] = useState<FundingView>(() => {
     const v = params.get('view');
     return v === 'funded' || v === 'not_funded' || v === 'eligible' ? v : 'all';
@@ -323,9 +329,9 @@ export function InvoicesPage() {
                     </td>
                     <td className="table-cell-wrap min-w-[11rem] max-w-[17rem]">
                       {inv.customer_name}
-                      {(inv.job_name || inv.contract_reference) && (
+                      {((projectTools && inv.job_name) || inv.contract_reference) && (
                         <div className="text-xs text-slate-500 truncate">
-                          {inv.job_name ?? `Contract ${inv.contract_reference}`}
+                          {projectTools && inv.job_name ? inv.job_name : `Contract ${inv.contract_reference}`}
                         </div>
                       )}
                     </td>

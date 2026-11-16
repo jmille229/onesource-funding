@@ -1,19 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { Outlet, NavLink, Navigate, useLocation } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, FolderKanban, FileText, Users, BarChart3,
-  LogOut, HardHat, Menu, X, Banknote, LayoutGrid,
+  LogOut, HardHat, Menu, X, Banknote, Settings,
 } from 'lucide-react';
-import { toast } from 'sonner';
 import { useAuthStore } from '../../stores/auth.store';
-import { api, apiError } from '../../lib/api';
+import { api } from '../../lib/api';
 import { useFundingAccount } from '../../lib/funding';
 import logo from '../../assets/onesource-logo.png';
 import { clsx } from 'clsx';
 
 export interface Workspace {
-  /** Jobs, budgets, the project dashboard and reports. */
+  /** Jobs, budgets, tasks, subcontracts, time and project reports. */
   projectTools: boolean;
   /** Whose name is on the app: One Source for clients it onboarded. */
   brand: 'onesource' | 'constructpm';
@@ -23,10 +22,10 @@ export interface Workspace {
  * How this company's app is set up. null while it loads.
  *
  * There is one app: invoices, with funding layered on for companies that
- * factor. `portal_mode: 'funding'` — set when One Source onboards a client —
- * once meant a separate funding-only app; it now means the company came
- * through One Source: One Source branding, and the project tools start off.
- * `project_tools` overrides that default either way.
+ * factor. The project tools are an add-on, switched on in Settings
+ * (`project_tools`; unset = off — V018 switched them on for companies already
+ * using them). `portal_mode: 'funding'`, set when One Source onboards a
+ * client, means the company came through One Source: One Source branding.
  */
 export function useWorkspace(): Workspace | null {
   const user = useAuthStore((s) => s.user);
@@ -42,27 +41,30 @@ export function useWorkspace(): Workspace | null {
   if (!data) return null;
   const viaOneSource = data.settings?.portal_mode === 'funding';
   return {
-    projectTools: data.settings?.project_tools ?? !viaOneSource,
+    projectTools: data.settings?.project_tools === true,
     brand: viaOneSource ? 'onesource' : 'constructpm',
   };
 }
 
 /** Screens that belong to the project tools. */
-const PROJECT_PATHS = ['/dashboard', '/jobs', '/reports'];
+const PROJECT_PATHS = ['/jobs', '/reports'];
 export const isProjectPath = (path: string) => PROJECT_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
 
+// Invoices first, funding right after (it's the layer on them), then the
+// project tools when they're on.
 const nav: { to: string; icon: typeof FileText; label: string; roles?: string[] }[] = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/jobs',      icon: FolderKanban,    label: 'Jobs' },
   { to: '/invoices',  icon: FileText,        label: 'Invoices' },
-  { to: '/contacts',  icon: Users,           label: 'Contacts' },
-  { to: '/reports',   icon: BarChart3,       label: 'Reports' },
   // Funding shows the company's factoring position, so it is limited to the
   // finance-facing roles. The API enforces the same set independently. It is
   // "Funding" for a company that factors and "Get paid now" for one that
   // doesn't yet (see SidebarContent).
   { to: '/funding',   icon: Banknote,        label: 'Funding',
     roles: ['owner', 'admin', 'accountant'] },
+  { to: '/contacts',  icon: Users,           label: 'Contacts' },
+  { to: '/jobs',      icon: FolderKanban,    label: 'Jobs' },
+  { to: '/reports',   icon: BarChart3,       label: 'Reports' },
+  { to: '/settings',  icon: Settings,        label: 'Settings', roles: ['owner', 'admin'] },
 ];
 
 /** One Source's logo on a white tile, so it reads on the dark sidebar. */
@@ -71,36 +73,6 @@ function OneSourceMark({ compact }: { compact?: boolean }) {
     <span className={clsx('inline-flex items-center rounded-md bg-white', compact ? 'px-1.5 py-1' : 'px-2 py-1.5')}>
       <img src={logo} alt="One Source Funding" className={compact ? 'h-6 w-auto' : 'h-8 w-auto'} />
     </span>
-  );
-}
-
-/** A company with the project tools off can switch them on itself. */
-function TurnOnTools() {
-  const user = useAuthStore((s) => s.user);
-  const qc = useQueryClient();
-  const [busy, setBusy] = useState(false);
-  if (!['owner', 'admin'].includes(user?.role ?? '')) return null;
-  const turnOn = async () => {
-    if (!window.confirm('Turn on jobs, budgets, a project dashboard and reports for your team? Invoices and Funding stay exactly as they are.')) return;
-    setBusy(true);
-    try {
-      await api.patch('/settings/company', { settings: { project_tools: true } });
-      await qc.invalidateQueries({ queryKey: ['company-settings'] });
-      toast.success('Project tools are on');
-    } catch (e) {
-      toast.error(apiError(e, 'Couldn’t turn them on'));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="mx-3 mb-3 rounded-md border border-slate-700 p-3">
-      <p className="text-xs text-slate-300">Run projects too? Track jobs, budgets and costs here.</p>
-      <button onClick={() => void turnOn()} disabled={busy}
-              className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-white hover:underline disabled:opacity-50">
-        <LayoutGrid className="w-3.5 h-3.5" /> Turn on project tools
-      </button>
-    </div>
   );
 }
 
@@ -159,7 +131,6 @@ function SidebarContent({ onNavigate, ws }: { onNavigate?: () => void; ws: Works
         ))}
       </nav>
 
-      {ws && !ws.projectTools && <TurnOnTools />}
 
       <div className="px-3 py-4 border-t border-slate-700 flex-shrink-0">
         <div className="flex items-center gap-3 px-3 py-2 rounded-md">

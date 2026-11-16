@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import { useAuthStore } from './stores/auth.store';
-import { AppLayout, useWorkspace } from './components/layout/AppLayout';
+import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './pages/auth/LoginPage';
 import { RegisterPage } from './pages/auth/RegisterPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -16,6 +16,7 @@ import { TasksPage } from './pages/tasks/TasksPage';
 import { InvoicesPage } from './pages/invoices/InvoicesPage';
 import { ContactsPage } from './pages/contacts/ContactsPage';
 import { ReportsPage } from './pages/reports/ReportsPage';
+import { SettingsPage } from './pages/settings/SettingsPage';
 import { FactoringPage } from './pages/factoring/FactoringPage';
 import { AdminConsolePage } from './pages/admin/AdminConsolePage';
 import { ApplyPage } from './pages/apply/ApplyPage';
@@ -35,11 +36,9 @@ const queryClient = new QueryClient({
   },
 });
 
-/** Funding-only clients land on Funding; everyone else on the dashboard. */
+/** Everyone starts on the dashboard. */
 function HomeRedirect() {
-  const ws = useWorkspace();
-  if (ws === null) return null;
-  return <Navigate to={ws.projectTools ? '/dashboard' : '/invoices'} replace />;
+  return <Navigate to="/dashboard" replace />;
 }
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -106,6 +105,7 @@ function SoftwareApp() {
             <Route path="contacts" element={<ContactsPage />} />
             <Route path="reports" element={<ReportsPage />} />
             <Route path="funding" element={<FactoringPage />} />
+            <Route path="settings" element={<SettingsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
