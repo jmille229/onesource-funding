@@ -280,6 +280,33 @@ where each one stands and what to do next (it changes nothing); the console's
 4. `./infra/deploy.sh`, then console → System → *Send me a test*. In Gmail,
    ⋮ → *Show original* should say PASS for SPF, DKIM and DMARC.
 
+**If the mail port is blocked.** DigitalOcean blocks outgoing mail ports 25,
+465 and 587 on many Droplets, Gmail included. The test then says "No answer
+from smtp.gmail.com on port 587". Check from the server:
+
+```bash
+timeout 5 bash -c '</dev/tcp/smtp.gmail.com/587' && echo open || echo blocked
+```
+
+Either ask DigitalOcean support to lift the block (a support ticket; they may
+want an account older than 60 days, and may say no), or, quicker, send the
+app's mail through a service that also listens on port **2587**. Your own
+mailbox stays on Google either way. With Resend (free tier):
+
+1. resend.com → *Domains* → add `os-funding.com` and add the DNS records it
+   shows. They live on `resend._domainkey` and `send.os-funding.com`, so they
+   don't touch your Google mail or your main SPF record. Press *Verify*.
+2. *API Keys* → create one with sending access → password manager.
+3. `.env.production` (replace the Google lines):
+   ```
+   SMTP_HOST=smtp.resend.com
+   SMTP_PORT=2587
+   SMTP_USER=resend
+   SMTP_PASS=<the API key>
+   EMAIL_FROM=noreply@os-funding.com
+   ```
+4. `./infra/deploy.sh`, then System → *Send me a test*.
+
 **Microsoft 365:** password-based sending from a Microsoft 365 mailbox is
 switched off by default for existing tenants from the end of December 2026,
 and Microsoft will remove it entirely later. Don't build on it. Send the app's

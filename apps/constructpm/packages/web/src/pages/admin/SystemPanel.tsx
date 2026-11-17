@@ -33,7 +33,8 @@ export function SystemPanel() {
       const r = await adminApi.post('/system/test-email');
       toast.success(`Sent to ${r.data.data.sent_to} — check the inbox (and spam)`);
     } catch (e) {
-      toast.error(apiError(e, 'Couldn’t send'));
+      const timedOut = (e as { code?: string })?.code === 'ECONNABORTED';
+      toast.error(timedOut ? 'No answer from the server within 30 seconds' : apiError(e, 'Couldn’t send'), { duration: 12_000 });
     } finally {
       setBusy(false);
     }

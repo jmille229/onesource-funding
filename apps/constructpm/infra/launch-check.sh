@@ -67,6 +67,10 @@ fi
 
 echo; echo "4. Email"
 set_ SMTP_HOST && ok "sending through ${SMTP_HOST}:${SMTP_PORT:-587} as ${EMAIL_FROM:-?}" || no "SMTP_HOST not set — no invites, resets or alerts" "DEPLOY.md → Email"
+if set_ SMTP_HOST; then
+  if timeout 6 bash -c "</dev/tcp/${SMTP_HOST}/${SMTP_PORT:-587}" 2>/dev/null; then ok "the server can reach ${SMTP_HOST} on port ${SMTP_PORT:-587}"
+  else no "the server can't reach ${SMTP_HOST} on port ${SMTP_PORT:-587} — outgoing mail port blocked?" "DEPLOY.md → Email → If the mail port is blocked"; fi
+fi
 [[ "${SMTP_HOST:-}" == *office365* || "${SMTP_HOST:-}" == *outlook* ]] && warn "Microsoft 365 password sending is being switched off" "use a sending service instead (DEPLOY.md → Email)"
 set_ OPS_NOTIFICATION_EMAIL && ok "alerts go to ${OPS_NOTIFICATION_EMAIL}" || no "OPS_NOTIFICATION_EMAIL not set — funding requests won't email you"
 if command -v dig >/dev/null; then
