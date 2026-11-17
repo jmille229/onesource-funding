@@ -25,9 +25,11 @@ load_env
 set_profiles
 
 # ─── Which build ─────────────────────────────────────────────────────────────
-CURRENT="$(tail -1 deploys.log 2>/dev/null | awk '{print $2}')"
+# deploys.log doesn't exist before the first deploy: `|| true`, or pipefail +
+# errexit would end the script here without a word.
+CURRENT="$(tail -1 deploys.log 2>/dev/null | awk '{print $2}' || true)"
 if $ROLLBACK; then
-  PREVIOUS="$(awk '{print $2}' deploys.log 2>/dev/null | tail -2 | head -1)"
+  PREVIOUS="$(awk '{print $2}' deploys.log 2>/dev/null | tail -2 | head -1 || true)"
   [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$CURRENT" ] || { echo "✗ no earlier deploy recorded in deploys.log" >&2; exit 1; }
   IMAGE_TAG="$PREVIOUS"
 elif [ -z "${IMAGE_TAG:-}" ] || [ "${IMAGE_TAG}" = "latest" ]; then

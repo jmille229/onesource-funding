@@ -25,7 +25,7 @@ BACKUP_DIR="${BACKUP_DIR:-./backups}"
 export BACKUP_DIR
 mkdir -p "$BACKUP_DIR"
 
-latest_local_db() { ls -1t "$BACKUP_DIR"/db-*.sql.gz.enc 2>/dev/null | head -1; }
+latest_local_db() { ls -1t "$BACKUP_DIR"/db-*.sql.gz.enc 2>/dev/null | head -1 || true; }
 
 confirm() {
   echo "$1"
@@ -54,21 +54,39 @@ case "${1:-}" in
   verify)
     file="${2:-$(latest_local_db)}"
     [ -n "$file" ] && [ -f "$file" ] || { echo "✗ no database backup found in $BACKUP_DIR" >&2; exit 1; }
+    psql_admin() { $COMPOSE exec -T postgres psql -U constructpm -d postgres -q -c "SET client_min_messages = warning" -c "$1" >/dev/null; }
+    # The scratch copy goes, however this ends.
+    trap 'psql_admin "DROP DATABASE IF EXISTS restore_check" 2>/dev/null || true' EXIT
+    rm -f "$BACKUP_DIR/restore_check.ok"
     echo "▶ test-restoring $file into a scratch database"
-    $COMPOSE exec -T postgres psql -U constructpm -d postgres -qc "DROP DATABASE IF EXISTS restore_check" >/dev/null
-    $COMPOSE exec -T postgres psql -U constructpm -d postgres -qc "CREATE DATABASE restore_check" >/dev/null
-    decrypt < "$file" | gunzip | $COMPOSE exec -T postgres psql -U constructpm -d restore_check -q -v ON_ERROR_STOP=0 >/dev/null 2>"$BACKUP_DIR/restore_check.log" || true
-    echo "▶ what came back:"
-    $COMPOSE exec -T postgres psql -U constructpm -d restore_check -c "
-      SELECT 'companies' AS what, count(*) FROM companies
-      UNION ALL SELECT 'users', count(*) FROM users
-      UNION ALL SELECT 'invoices', count(*) FROM invoices
-      UNION ALL SELECT 'advances', count(*) FROM factored_invoices
-      UNION ALL SELECT 'ledger events', count(*) FROM factoring_events
-      UNION ALL SELECT 'newest migration', max(version)::bigint FROM schema_migrations"
-    $COMPOSE exec -T postgres psql -U constructpm -d postgres -qc "DROP DATABASE restore_check" >/dev/null
+    psql_admin "DROP DATABASE IF EXISTS restore_check"
+    psql_admin "CREATE DATABASE restore_check"
+    # psql keeps going past SQL errors (they're counted below); a failure of the
+    # pipeline itself means the file couldn't be decrypted or unpacked.
+    if ! decrypt < "$file" | gunzip | $COMPOSE exec -T postgres psql -U constructpm -d restore_check -q -v ON_ERROR_STOP=0 >/dev/null 2>"$BACKUP_DIR/restore_check.log"; then
+      echo "✗ couldn't read $file — is BACKUP_PASSPHRASE the one it was made with?" >&2; exit 1
+    fi
+    q="SELECT 'companies', count(*)::text FROM companies
+       UNION ALL SELECT 'logins', count(*)::text FROM users
+       UNION ALL SELECT 'invoices', count(*)::text FROM invoices
+       UNION ALL SELECT 'advances', count(*)::text FROM factored_invoices
+       UNION ALL SELECT 'ledger entries', count(*)::text FROM factoring_events
+       UNION ALL SELECT 'newest migration', max(version) FROM schema_migrations"
+    restored="$($COMPOSE exec -T postgres psql -U constructpm -d restore_check -v ON_ERROR_STOP=1 -tA -F'|' -c "$q")" \
+      || { echo "✗ the restored copy is missing tables — see $BACKUP_DIR/restore_check.log" >&2; exit 1; }
+    live="$($COMPOSE exec -T postgres psql -U constructpm -d constructpm -tA -F'|' -c "$q" 2>/dev/null || true)"
+    echo "▶ what came back (the live database may have more if it changed since the backup):"
+    paste -d'|' <(printf '%s\n' "$restored") <(printf '%s\n' "$live" | cut -d'|' -f2) \
+      | awk -F'|' 'BEGIN { printf "    %-18s %-30s %s\n", "", "in the backup", "live now" }
+                   { printf "    %-18s %-30s %s\n", $1, $2, $3 }'
     errors="$(grep -c 'ERROR' "$BACKUP_DIR/restore_check.log" || true)"
-    echo "✓ restore test finished (${errors} errors; details in $BACKUP_DIR/restore_check.log). Scratch database dropped."
+    if [ "$errors" != "0" ]; then
+      echo "✗ $errors errors while loading it; the first few:" >&2
+      grep 'ERROR' "$BACKUP_DIR/restore_check.log" | head -5 >&2
+      exit 1
+    fi
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$BACKUP_DIR/restore_check.ok"
+    echo "✓ restore test passed: the backup decrypts and loads cleanly. Scratch database dropped."
     ;;
 
   db)
