@@ -9,6 +9,7 @@ import { scoreRequestInBackground } from './underwriting.service.js';
 import { fundingInsights, fundingStatement } from '../../lib/funding-reports.js';
 import { APPROVAL_DOC_TYPES, DOC_TYPE_LABELS, type DocType } from '@constructpm/shared';
 import type pg from 'pg';
+import { businessToday } from '../../lib/dates.js';
 
 export const factoringRouter = Router();
 
@@ -214,7 +215,7 @@ factoringRouter.get('/invoices', requireRole(...FINANCE_ROLES), asyncHandler(asy
 }));
 
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = () => businessToday();
 
 /**
  * GET /api/factoring/statement?from=YYYY-MM-DD&to=YYYY-MM-DD — everything that

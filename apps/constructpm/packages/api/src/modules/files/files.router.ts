@@ -13,8 +13,9 @@ import { validate as isUuid } from 'uuid';
 import { writePool, readPool, createRlsClient } from '../../lib/db.js';
 import { asyncHandler, requireRole, logger } from '../../middleware/index.js';
 import { env } from '../../lib/env.js';
-import { s3, sanitizeFilename, deliverAttachment } from '../../lib/storage.js';
+import { s3, sanitizeFilename, deliverAttachment, uploadEncryption } from '../../lib/storage.js';
 import { DOC_TYPES } from '@constructpm/shared';
+import { scanInBackground } from '../../lib/scanner.js';
 
 export const filesRouter = Router();
 
@@ -291,7 +292,7 @@ filesRouter.post(
                 Key: key,
                 Body: s3Stream,
                 ContentType: claimedMime,
-                ServerSideEncryption: env.NODE_ENV === 'production' ? 'AES256' : undefined,
+                ServerSideEncryption: uploadEncryption(),
                 Metadata: {
                   original_name: safeName,
                   uploaded_by: req.auth.userId,
@@ -303,6 +304,7 @@ filesRouter.post(
             });
 
             await upload.done();
+            scanInBackground(key);
 
             const dbWrite = createRlsClient(writePool, req.auth.companyId);
             const result = await dbWrite.query(

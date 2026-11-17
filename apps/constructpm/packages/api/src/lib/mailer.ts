@@ -57,3 +57,16 @@ export const OPS_INBOX = env.OPS_NOTIFICATION_EMAIL ?? null;
 
 /** True when alerts have somewhere to go. */
 export const opsNotificationsEnabled = Boolean(enabled && OPS_INBOX);
+
+/** For the console's "send a test email": like notify, but tells you what went wrong. */
+export async function sendTestEmail(to: string): Promise<void> {
+  if (!transport) throw Object.assign(new Error('Email isn’t configured on this server (SMTP_HOST is unset).'), { status: 409 });
+  await transport.sendMail({
+    from: env.EMAIL_FROM,
+    to,
+    subject: 'One Source test email',
+    text: 'This is a test from the One Source console. If it arrived, the server can send email.',
+  }).catch((err: Error) => {
+    throw Object.assign(new Error(`The mail server refused it: ${err.message}`), { status: 502 });
+  });
+}

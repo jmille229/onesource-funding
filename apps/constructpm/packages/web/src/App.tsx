@@ -19,6 +19,7 @@ import { ReportsPage } from './pages/reports/ReportsPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
 import { VerifyEmailPage } from './pages/auth/VerifyEmailPage';
 import { AccountPage } from './pages/settings/AccountPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { FactoringPage } from './pages/factoring/FactoringPage';
 import { AdminConsolePage } from './pages/admin/AdminConsolePage';
@@ -79,6 +80,7 @@ function SoftwareApp() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <ErrorBoundary>
         <Toaster position="top-right" richColors />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
@@ -116,6 +118,7 @@ function SoftwareApp() {
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </ErrorBoundary>
       </BrowserRouter>
     </QueryClientProvider>
   );

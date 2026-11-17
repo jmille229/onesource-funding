@@ -4,6 +4,7 @@ import { writePool, readPool, createRlsClient, withTransaction } from '../../lib
 import { parsePagination } from '../../lib/pagination.js';
 import { uuidParam } from '../../lib/query-params.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
+import { businessToday } from '../../lib/dates.js';
 
 export const vendorBillsRouter = Router();
 
@@ -12,7 +13,7 @@ const schema = z.object({
   vendor_id: z.string().uuid(),
   purchase_order_id: z.string().uuid().optional().nullable(),
   bill_number: z.string().optional().nullable(),
-  bill_date: z.string().default(() => new Date().toISOString().split('T')[0]!),
+  bill_date: z.string().default(() => businessToday()),
   due_date: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
   items: z.array(z.object({

@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
 import pino from 'pino';
+import { reportError } from '../lib/monitoring.js';
 import { pinoHttp } from 'pino-http';
 import { z } from 'zod';
 import { RateLimiterRedis, RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
@@ -220,6 +221,14 @@ export function operatorRateLimit(req: Request, res: Response, next: NextFunctio
     { error: 'rate_limit_exceeded', message: 'Too many requests. Please slow down.' });
 }
 
+// Browser error reports (unauthenticated): enough for a page that keeps
+// crashing to be heard, not enough to flood error tracking.
+const clientErrorLimiter = makeRateLimiter({ points: 30, duration: 600, keyPrefix: 'rl:clienterr' });
+export function clientErrorRateLimit(req: Request, res: Response, next: NextFunction) {
+  limit(clientErrorLimiter, req.ip ?? 'unknown', res, next,
+    { error: 'too_many_requests', message: 'Too many reports.' });
+}
+
 // ─── Request timeout ─────────────────────────────────────────────────────────
 export function requestDeadline(timeoutMs = 30_000, uploadTimeoutMs = 5 * 60_000) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -277,6 +286,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
 
   if (status >= 500) {
     logger.error({ err, path: req.path, correlation_id: req.correlationId }, message);
+    reportError(err, { method: req.method, path: req.path, correlation_id: req.correlationId });
   }
 
   res.status(status).json({

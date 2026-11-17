@@ -4,6 +4,7 @@ import type pg from 'pg';
 import { adminPool, withAdminTransaction, audit } from '../../lib/admin-db.js';
 import { asyncHandler, validate } from '../../middleware/index.js';
 import { emailInvite, INVITE_TTL_DAYS, inviteLink, newInviteToken } from './invites.js';
+import { businessToday } from '../../lib/dates.js';
 
 /**
  * Adding and managing funding clients by hand in the operator console (V014):
@@ -71,7 +72,7 @@ const createSchema = z.object({
 
 clientsAdminRouter.post('/clients/new', validate(createSchema), asyncHandler(async (req, res) => {
   const b = req.body as z.infer<typeof createSchema>;
-  const onboardedOn = b.onboarded_on ?? (b.status === 'active' ? new Date().toISOString().slice(0, 10) : null);
+  const onboardedOn = b.onboarded_on ?? (b.status === 'active' ? businessToday() : null);
 
   const out = await withAdminTransaction(async (c) => {
     const insertClient = (companyId: string) => c.query<{ id: string }>(

@@ -11,6 +11,7 @@ import { ImportPanel } from './ImportPanel';
 import { ClientsPanel } from './ClientsPanel';
 import { AdvancesTable } from './AdvancesTable';
 import { SecondStep, type SessionData } from '../../components/SecondStep';
+import { SystemPanel, EmailOffBanner } from './SystemPanel';
 
 const postAdmin = (path: string, body: object) => adminApi.post(path, body).then((r) => r.data.data);
 
@@ -182,7 +183,7 @@ function FundForm({ onDone }: { onDone: () => void }) {
 // Requests leads: it is the only tab with work waiting on it, and the queue is
 // where the underwriting engine actually earns its keep.
 // Applications sits next to it: new clients from apply.os-funding.com.
-const TABS = ['Requests', 'Applications', 'Advances', 'Clients', 'Debtors', 'Import', 'Audit'] as const;
+const TABS = ['Requests', 'Applications', 'Advances', 'Clients', 'Debtors', 'Import', 'Audit', 'System'] as const;
 
 export function AdminConsolePage() {
   const email = useAdminStore((s) => s.email);
@@ -234,6 +235,8 @@ export function AdminConsolePage() {
       </nav>
 
       <main className="max-w-7xl mx-auto page">
+        <EmailOffBanner />
+        {tab === 'System' && <SystemPanel />}
         {tab === 'Requests' && <UnderwritingQueue />}
         {tab === 'Applications' && <ApplicationsPanel />}
         {tab === 'Advances' && (

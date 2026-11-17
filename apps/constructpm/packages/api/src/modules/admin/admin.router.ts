@@ -13,7 +13,11 @@ import { scoreRequest } from '../factoring/underwriting.service.js';
 import { parseDelimited, toAdvancePayload } from './import-map.js';
 import { planImport, type PlanItem } from './import-plan.js';
 import { parsePagination } from '../../lib/pagination.js';
-import { deliverAttachment } from '../../lib/storage.js';
+import { deliverAttachment, uploadEncryption } from '../../lib/storage.js';
+import { env } from '../../lib/env.js';
+import { mailEnabled, OPS_INBOX, sendTestEmail } from '../../lib/mailer.js';
+import { monitoringEnabled } from '../../lib/monitoring.js';
+import { scanningEnabled, clamdPing } from '../../lib/scanner.js';
 import { applicationsAdminRouter } from './applications.admin.js';
 import { clientsAdminRouter } from './clients.admin.js';
 import { APPROVAL_DOC_TYPES } from '@constructpm/shared';
@@ -159,6 +163,31 @@ adminRouter.post('/auth/mfa/setup/finish', refreshRateLimit, validate(opCode), a
 
 // Everything below requires an operator token, and is rate limited per operator.
 adminRouter.use(authenticatePlatform, operatorRateLimit);
+
+// ─── System status ────────────────────────────────────────────────────────────
+// What's switched on in this deployment, so a missing setting is visible in
+// the console rather than discovered when an email never arrives.
+adminRouter.get('/system', asyncHandler(async (_req, res) => {
+  let storageHost = env.S3_ENDPOINT;
+  try { storageHost = new URL(env.S3_ENDPOINT).host; } catch { /* keep as is */ }
+  res.json({
+    data: {
+      email: { configured: mailEnabled, from: env.EMAIL_FROM, ops_inbox: OPS_INBOX },
+      error_tracking: monitoringEnabled,
+      malware_scanning: { configured: scanningEnabled, reachable: scanningEnabled ? await clamdPing() : false },
+      encryption_key: secretsConfigured,
+      storage: { host: storageHost, local_minio: /(^|\/\/)minio(:|$)/.test(env.S3_ENDPOINT) || storageHost.startsWith('minio'),
+                 encrypt_at_rest: uploadEncryption() === 'AES256' },
+      business_time_zone: env.BUSINESS_TZ,
+      release: env.APP_RELEASE ?? null,
+    },
+  });
+}));
+
+adminRouter.post('/system/test-email', asyncHandler(async (req, res) => {
+  await sendTestEmail(req.platform.email);
+  res.json({ data: { sent_to: req.platform.email } });
+}));
 
 // Funding applications (apply.os-funding.com) and their requirements.
 adminRouter.use(applicationsAdminRouter);

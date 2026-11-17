@@ -6,6 +6,7 @@ import { enumParam, uuidParam } from '../../lib/query-params.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 import { SUBMISSION_METHODS } from '@constructpm/shared';
 import { notify, OPS_INBOX } from '../../lib/mailer.js';
+import { businessToday } from '../../lib/dates.js';
 
 export const invoicesRouter = Router();
 
@@ -27,7 +28,7 @@ const INVOICE_STATUSES = [
 const AWAITING = `('sent','viewed','overdue')`;
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
-const today = () => new Date().toISOString().split('T')[0]!;
+const today = () => businessToday();
 
 const lineSchema = z.object({
   id: z.string().uuid().optional(),

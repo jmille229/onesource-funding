@@ -7,6 +7,11 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from './env.js';
+import { ensureScanned, scanInBackground } from './scanner.js';
+
+/** The SSE header for uploads, per S3_SERVER_SIDE_ENCRYPTION (on by default in production). */
+export const uploadEncryption = (): 'AES256' | undefined =>
+  (env.S3_SERVER_SIDE_ENCRYPTION ?? (env.NODE_ENV === 'production' ? 'AES256' : 'none')) === 'AES256' ? 'AES256' : undefined;
 
 // ─── S3/MinIO clients ─────────────────────────────────────────────────────────
 // `s3` talks to the store over the internal/server-side address.
@@ -52,6 +57,13 @@ export async function deliverAttachment(
 ): Promise<void> {
   const safeName = sanitizeFilename(String(attachment['original_name']));
   const disposition = `attachment; filename*=UTF-8''${encodeURIComponent(safeName)}`;
+
+  // Never hand out a file the scanner flagged (scanned now if it hasn't been).
+  if (await ensureScanned(String(attachment['storage_key'])) === 'infected') {
+    res.status(422).json({ error: 'infected', code: 'infected',
+      message: 'This file was flagged as malware and can’t be downloaded. Ask the sender for a clean copy.' });
+    return;
+  }
 
   // Two delivery modes:
   //
@@ -203,11 +215,12 @@ export async function receiveFileUpload(req: Request, opts: UploadOptions): Prom
             client: s3,
             params: {
               Bucket: env.S3_BUCKET_FILES, Key: key, Body: out, ContentType: detected.mime,
-              ServerSideEncryption: env.NODE_ENV === 'production' ? 'AES256' : undefined,
+              ServerSideEncryption: uploadEncryption(),
             },
             queueSize: 4,
             partSize: 5 * 1024 * 1024,
           }).done();
+          scanInBackground(key);
           result = { key, safeName, contentType: detected.mime, size, fields: { ...fields } };
           done();
         })().catch((err) => { aborted = true; out.destroy(); reject(err); });
