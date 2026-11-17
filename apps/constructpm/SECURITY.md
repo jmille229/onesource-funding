@@ -115,28 +115,62 @@ audience). The findings below are what was wrong around that core.
 
 ### Known and accepted / operator actions
 
-- **Backups stay on the VPS.** `infra/backup.sh` protects against application
-  mistakes, not against losing the box. Copy `./backups` off-host nightly
-  (S3/Backblaze/rsync). This is the largest remaining single point of failure.
+- ~~**Backups stay on the VPS.**~~ Resolved November 2026: `infra/backup.sh`
+  encrypts and copies off-site (see below and DEPLOY.md → Backups).
 - **CI audit level stays at `critical`.** Bumping to `high` would fail on the
   react-router RSC advisory documented above, which is accepted as unreachable.
 - **`trust proxy` is `1`.** Correct for Caddy-only. If Cloudflare is ever put
   in front of the VPS it must become `2` (or Caddy must be told to trust
   CF's ranges), or every rate limit keys on Cloudflare's IPs.
-- **List endpoints now cap, they do not page.** Defaults (200 rows; 500 for a
-  job's tasks and the factoring lists; 1000 for reports and the operator's
-  book) are above anything a tenant holds today, and clients may pass
-  `?per_page=`. Real paging in the UI is a product change and a follow-up.
+- **List endpoints now cap, they do not page** — except invoices, which page
+  on the server as of November 2026 (the tenant table that grows fastest).
+  Other caps (200 rows; 500 for a job's tasks and the factoring lists; 1000
+  for reports and the operator's book) are above anything a tenant holds today.
 - **A role change takes effect on the next refresh, up to 15 minutes.** The
   access token carries the role; refresh re-reads it from the database. Fine
   for a downgrade from admin to viewer; not fine if immediate lock-out is
   ever required — deactivate instead, which is immediate as of V009.
-- **Registration has no email verification.** Rate-limited to 10/min/IP.
-  Acceptable for a B2B tool whose tenants are onboarded by an operator anyway;
-  revisit if self-serve signup is ever marketed.
-- **`/api/admin/*` is not behind `tenantRateLimit`.** A single trusted operator
-  account today. Add a per-operator limiter before there are many.
-- **The 30 s request deadline and large imports.** A ~400-row workbook import
-  runs ~2,000 statements in one transaction and may approach the deadline.
-  `statement_timeout` is per statement so it will not fire; if the deadline
-  does, chunk the import.
+- ~~**Registration has no email verification.**~~ Resolved November 2026.
+- ~~**`/api/admin/*` is not behind a rate limit.**~~ Resolved November 2026
+  (600/min per operator).
+- ~~**The 30 s request deadline and large imports.**~~ Resolved November 2026:
+  uploads and the operator import get 5 minutes.
+
+## Review — November 2026 (pre-launch)
+
+A production-readiness pass before real client data. Changes:
+
+| Area | Change | Where |
+|---|---|---|
+| Data minimisation | **Social Security numbers are no longer collected.** The apply flow asks for the business EIN only. V019 deleted every stored SSN and CHECK constraints refuse new ones. Backups taken before V019 still hold encrypted copies until they age out. | V019; `apply` module and UI |
+| Account recovery | **Password reset** by email: single-use, 1-hour link (stored as a SHA-256 hash), at most one per minute per account, the request always answers the same way whether or not the address exists, and a reset signs every session out and voids other outstanding links. | V020 `auth_request_password_reset`, `auth_accept_invite`; `security.router` |
+| Account takeover | **Two-step sign-in** (TOTP, RFC 6238, ±30 s, each code usable once) with ten single-use recovery codes (SHA-256 hashed). Secrets are encrypted with `APPLICATION_DATA_KEY`. Optional for client users; a company owner can require it for the whole company (only after turning it on themselves). **Mandatory for operators** — the first console sign-in after deploy sets it up. Code checks are limited to 6 per 5 minutes per account. Lost device and codes: `infra/reset-operator-2fa.sh` / `infra/reset-user-2fa.sh` on the server, after confirming identity by calling back a known number. | V020; `lib/mfa.ts`, `modules/auth/session.ts`, `security.router`, `admin.router` |
+| Signup abuse | Email verification (7-day link) before a self-registered company can submit a funding application; honeypot field and a minimum fill time on register; re-sends limited to 5/hour per address. | V020; `auth.router`, `factoring.router` |
+| Malicious uploads | **ClamAV scanning** (optional `clamav` profile). Every upload is scanned in the background and every download path re-checks a cached verdict; infected files are refused with 422 and never served. | `lib/scanner.ts`, `lib/storage.ts`; V021 `file_scans` |
+| Files at rest | Production file storage moves off the self-hosted MinIO to a managed S3-compatible bucket with provider-side encryption; `infra/migrate-files.sh` copies and checks. MinIO stays available behind the `minio` profile. | `docker-compose.prod.yml`; DEPLOY.md → File storage |
+| Backups | Nightly database + files + secrets, encrypted on the server (AES-256, PBKDF2 200k) with `BACKUP_PASSPHRASE`, copied off-site with rclone, success pinged to a health check. Deploys take a database backup before migrating. `infra/restore.sh verify` test-restores into a throwaway database. | `infra/backup.sh`, `infra/restore.sh`, `infra/deploy.sh` |
+| Deploys | `deploy.sh` pins the exact image build, records it, and `--rollback` returns to the previous one. | `infra/deploy.sh` |
+| Visibility | Optional Sentry error tracking (server and browser; no request bodies, cookies or user details sent); browser errors relayed through the API, limited to 30 per 10 minutes per IP. A startup warning and a console banner when email isn't configured; console System tab with service status and a test email. | `lib/monitoring.ts`, `telemetry.router`, `SystemPanel` |
+| Operator API | Per-operator limit of 600 requests/min. | `middleware` `operatorRateLimit` |
+| Server | `infra/harden.sh`: firewall (22/80/443 only), SSH keys only, unattended security updates, fail2ban. Shows what it would change unless run with `--apply`. | `infra/harden.sh` |
+| Incident plan | A written response plan, for counsel review. | `INCIDENT_RESPONSE.md` |
+
+### Known and accepted
+
+- **Malware scanning fails open.** If clamd is down, uploads still succeed and
+  downloads are served; the file is scanned when the scanner is back and any
+  later download is refused if it's infected. The console System tab shows
+  when the scanner is down.
+- **An open operator session survives deactivation for up to an hour.** The
+  operator token isn't re-checked against the database on every request.
+  Rotate the signing keys to cut every session off at once
+  (INCIDENT_RESPONSE.md).
+- **Two-step sign-in has no SMS or email fallback,** deliberately: both are
+  weaker than an authenticator app. Recovery codes are the fallback.
+- **The scripts in `infra/` that touch outside services** (rclone, the ClamAV
+  image, `harden.sh`, `migrate-files.sh`) were checked for syntax and run
+  locally where possible, not against the production server. Run each once
+  by hand as DEPLOY.md's launch checklist describes.
+- **Consent wording** on the application still authorises personal credit
+  reports on the owners. With no SSN collected, have counsel confirm the
+  wording and how owner checks are run.

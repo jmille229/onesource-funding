@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { writePool, readPool, createRlsClient, withTransaction } from '../../lib/db.js';
-import { parsePagination } from '../../lib/pagination.js';
+import { parsePagination, escapeLike } from '../../lib/pagination.js';
 import { enumParam, uuidParam } from '../../lib/query-params.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
 import { SUBMISSION_METHODS } from '@constructpm/shared';
 import { notify, OPS_INBOX } from '../../lib/mailer.js';
+import { businessToday } from '../../lib/dates.js';
 
 export const invoicesRouter = Router();
 
@@ -27,7 +28,7 @@ const INVOICE_STATUSES = [
 const AWAITING = `('sent','viewed','overdue')`;
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
-const today = () => new Date().toISOString().split('T')[0]!;
+const today = () => businessToday();
 
 const lineSchema = z.object({
   id: z.string().uuid().optional(),
@@ -103,16 +104,48 @@ const LOCKED = 'This invoice is funded by One Source, so its amount, agency and 
 
 const conflict = (message: string) => Object.assign(new Error(message), { status: 409 });
 
+/**
+ * Which invoices a funding view means. Eligible: approved by the agency, money
+ * still owed, never funded, and no funding request in flight (a declined one
+ * can be asked again).
+ */
+const FUNDING_VIEW = {
+  funded: `EXISTS (SELECT 1 FROM factored_invoices fi WHERE fi.invoice_id = i.id)`,
+  not_funded: `NOT EXISTS (SELECT 1 FROM factored_invoices fi WHERE fi.invoice_id = i.id)`,
+  eligible: `i.status = 'approved' AND i.balance_due > 0
+             AND NOT EXISTS (SELECT 1 FROM factored_invoices fi WHERE fi.invoice_id = i.id)
+             AND NOT EXISTS (SELECT 1 FROM funding_requests fr WHERE fr.invoice_id = i.id
+                              AND fr.status IN ('submitted','under_review','approved'))`,
+} as const;
+
+/**
+ * GET /invoices — a page of the list. Filters: status, job_id, funding
+ * (funded | not_funded | eligible), q (number, agency, job, contract, agency
+ * ref). sort=created for most recently logged first. The response's `meta`
+ * carries the total, so the client pages instead of loading everything.
+ */
 invoicesRouter.get('/', asyncHandler(async (req, res) => {
   const job_id = uuidParam(req.query['job_id'], 'job_id');
   const status = enumParam(req.query['status'], INVOICE_STATUSES, 'status');
+  const funding = enumParam(req.query['funding'], ['funded', 'not_funded', 'eligible'] as const, 'funding');
+  const q = typeof req.query['q'] === 'string' ? req.query['q'].trim() : '';
+  const { limit, offset, page, per_page } = parsePagination(req.query, { defaultPerPage: 100, maxPerPage: 500 });
   const db = createRlsClient(readPool, req.auth.companyId);
   const params: unknown[] = [];
   const conds = ['i.deleted_at IS NULL'];
   if (job_id) { params.push(job_id); conds.push(`i.job_id=$${params.length}`); }
   if (status) { params.push(status); conds.push(`i.status=$${params.length}`); }
-  // A factoring client's list includes their whole funded history.
-  params.push(parsePagination(req.query, { defaultPerPage: 1000, maxPerPage: 2000 }).limit);
+  if (funding) conds.push(FUNDING_VIEW[funding]);
+  if (q) {
+    params.push(`%${escapeLike(q)}%`);
+    const p = `$${params.length}`;
+    conds.push(`(i.invoice_number ILIKE ${p} OR c.name ILIKE ${p} OR j.name ILIKE ${p}
+                 OR i.agency_reference ILIKE ${p} OR i.contract_reference ILIKE ${p})`);
+  }
+  const order = req.query['sort'] === 'created'
+    ? 'i.created_at DESC'
+    : 'COALESCE(i.submitted_on, i.issue_date) DESC, i.created_at DESC';
+  params.push(limit, offset);
   const r = await db.query(
     `SELECT i.*, c.name customer_name, j.name job_name, j.job_number, ${FUNDED_STATUS},
             -- How many documents are on file, and whether any is proof of approval.
@@ -121,14 +154,59 @@ invoicesRouter.get('/', asyncHandler(async (req, res) => {
             EXISTS (SELECT 1 FROM file_attachments fa
               WHERE fa.entity_type='invoice' AND fa.entity_id=i.id
                 AND fa.doc_type IN ('approved_invoice','approval_email','portal_screenshot','certified_pay_app'))
-              AS has_approval_doc
+              AS has_approval_doc,
+            COUNT(*) OVER() AS _total
        FROM invoices i
        LEFT JOIN contacts c ON c.id=i.customer_id
        LEFT JOIN jobs j ON j.id=i.job_id
       WHERE ${conds.join(' AND ')}
-      ORDER BY COALESCE(i.submitted_on, i.issue_date) DESC, i.created_at DESC
-      LIMIT $${params.length}`, params);
-  res.json({ data: r.rows });
+      ORDER BY ${order}
+      LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+  const total = r.rows[0] ? Number(r.rows[0]['_total']) : 0;
+  res.json({ data: r.rows.map(({ _total, ...row }) => row), meta: { total, page, per_page } });
+}));
+
+/**
+ * GET /invoices/summary — the totals the dashboard, the Invoices page and the
+ * Funding page show, computed over every invoice (not one page of them).
+ */
+invoicesRouter.get('/summary', asyncHandler(async (req, res) => {
+  const db = createRlsClient(readPool, req.auth.companyId);
+  const r = await db.query(`
+    WITH inv AS (
+      SELECT i.*,
+             EXISTS (SELECT 1 FROM factored_invoices fi WHERE fi.invoice_id = i.id) AS funded,
+             EXISTS (SELECT 1 FROM factored_invoices fi WHERE fi.invoice_id = i.id
+                      AND fi.status IN ('pending','advanced')) AS funded_open,
+             (${FUNDING_VIEW.eligible}) AS eligible
+        FROM invoices i WHERE i.deleted_at IS NULL)
+    SELECT
+      COUNT(*)::int AS total_count,
+      COUNT(*) FILTER (WHERE status NOT IN ('draft','paid','void'))::int AS outstanding_count,
+      COALESCE(SUM(balance_due) FILTER (WHERE status NOT IN ('draft','paid','void')), 0)::float AS outstanding_amount,
+      COUNT(*) FILTER (WHERE status IN ${AWAITING})::int AS awaiting_count,
+      COALESCE(SUM(balance_due) FILTER (WHERE status IN ${AWAITING}), 0)::float AS awaiting_amount,
+      COUNT(*) FILTER (WHERE status IN ${AWAITING} AND submitted_on < CURRENT_DATE - 30)::int AS slow_count,
+      COUNT(*) FILTER (WHERE status = 'approved')::int AS approved_count,
+      COUNT(*) FILTER (WHERE status IN ('approved','partially_paid') AND balance_due > 0)::int AS payable_count,
+      COALESCE(SUM(balance_due) FILTER (WHERE status IN ('approved','partially_paid') AND balance_due > 0), 0)::float AS payable_amount,
+      COUNT(*) FILTER (WHERE status = 'approved' AND balance_due > 0 AND NOT funded)::int AS approved_unfunded_count,
+      COALESCE(SUM(balance_due) FILTER (WHERE status = 'approved' AND balance_due > 0 AND NOT funded), 0)::float AS approved_unfunded_amount,
+      COUNT(*) FILTER (WHERE eligible)::int AS eligible_count,
+      COALESCE(SUM(balance_due) FILTER (WHERE eligible), 0)::float AS eligible_amount,
+      COUNT(*) FILTER (WHERE funded)::int AS funded_count,
+      COUNT(*) FILTER (WHERE funded_open AND status NOT IN ('paid','void'))::int AS funded_open_count,
+      COALESCE(SUM(balance_due) FILTER (WHERE funded_open AND status NOT IN ('paid','void')), 0)::float AS funded_open_amount,
+      COUNT(*) FILTER (WHERE status IN ('approved','partially_paid') AND balance_due > 0
+                        AND due_date < CURRENT_DATE AND NOT funded)::int AS past_due_count,
+      COALESCE(SUM(balance_due) FILTER (WHERE status IN ('approved','partially_paid') AND balance_due > 0
+                        AND due_date < CURRENT_DATE AND NOT funded), 0)::float AS past_due_amount,
+      COUNT(*) FILTER (WHERE status = 'returned')::int AS returned_count,
+      COUNT(*) FILTER (WHERE status = 'draft')::int AS draft_count,
+      COALESCE(SUM(total) FILTER (WHERE status NOT IN ('draft','void')
+                        AND date_trunc('month', issue_date) = date_trunc('month', CURRENT_DATE)), 0)::float AS billed_this_month
+    FROM inv`);
+  res.json({ data: r.rows[0] });
 }));
 
 invoicesRouter.get('/:id', asyncHandler(async (req, res) => {

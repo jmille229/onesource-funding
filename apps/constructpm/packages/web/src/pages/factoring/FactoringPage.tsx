@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import { api, apiError, formatCurrency, formatDate, todayISO } from '../../lib/api';
 import { factoredInvoiceRef } from '@constructpm/shared';
 import { FundingOnboardingForm } from '../../components/FundingOnboardingForm';
-import { FUNDING_BADGE, FUNDING_LABEL, downloadAttachment } from '../../lib/invoices';
+import { FUNDING_BADGE, FUNDING_LABEL, downloadAttachment, useInvoiceSummary } from '../../lib/invoices';
 import { ADVANCE_MAX, ADVANCE_TYPICAL } from '../../lib/funding';
 import { downloadCsv } from '../../lib/download';
 import { useAuthStore } from '../../stores/auth.store';
@@ -140,17 +140,14 @@ function Overview({ summary, onOpen }: { summary: Summary; onOpen: (invoiceId: s
     queryKey: ['factoring-invoices', 'outstanding'],
     queryFn: () => api.get('/factoring/invoices?status=outstanding').then((r) => r.data.data),
   });
-  const { data: invoices = [] } = useQuery<{ id: string; status: string; balance_due: string; funded_id: string | null }[]>({
-    queryKey: ['invoices', ''],
-    queryFn: () => api.get('/invoices?status=').then((r) => r.data.data),
-  });
   const { data: requests = [] } = useQuery<FundingRequestRow[]>({
     queryKey: ['factoring-requests'],
     queryFn: () => api.get('/factoring/requests').then((r) => r.data.data),
   });
-  const inFlight = new Set(requests.filter((r) => ['submitted', 'under_review', 'approved'].includes(r.status)).map((r) => r.invoice_id));
-  const ready = invoices.filter((i) => i.status === 'approved' && Number(i.balance_due) > 0 && !i.funded_id && !inFlight.has(i.id));
-  const readyTotal = ready.reduce((s, i) => s + Number(i.balance_due), 0);
+  // Approved, unfunded, no request in flight — counted on the server.
+  const { data: sm } = useInvoiceSummary();
+  const readyCount = sm?.eligible_count ?? 0;
+  const readyTotal = sm?.eligible_amount ?? 0;
   const approaching = Number(summary.approaching_recourse ?? 0);
 
   return (
@@ -202,12 +199,12 @@ function Overview({ summary, onOpen }: { summary: Summary; onOpen: (invoiceId: s
         </div>
       )}
 
-      {summary.status === 'active' && ready.length > 0 && (
+      {summary.status === 'active' && readyCount > 0 && (
         <Link to="/invoices?view=eligible"
               className="card p-4 mb-6 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 hover:border-brand-300">
           <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0" />
           <p className="flex-1 text-sm text-slate-700">
-            <strong className="text-slate-900">{ready.length} approved invoice{ready.length === 1 ? '' : 's'}</strong>{' '}
+            <strong className="text-slate-900">{readyCount} approved invoice{readyCount === 1 ? '' : 's'}</strong>{' '}
             ({formatCurrency(readyTotal)}) ready to fund — up to {formatCurrency(readyTotal * ADVANCE_MAX)}.
           </p>
           <span className="text-sm font-medium text-brand-600">Choose which →</span>
@@ -918,14 +915,10 @@ function OnboardingDocuments() {
  * and what One Source could advance on it today.
  */
 function GetPaidNow() {
-  const { data: invoices = [] } = useQuery<{ status: string; balance_due: string; funded_id: string | null }[]>({
-    queryKey: ['invoices', ''],
-    queryFn: () => api.get('/invoices?status=').then((r) => r.data.data),
-  });
-  const approved = invoices.filter((i) => i.status === 'approved' && Number(i.balance_due) > 0 && !i.funded_id);
-  const approvedTotal = approved.reduce((s, i) => s + Number(i.balance_due), 0);
-  const waiting = invoices.filter((i) => ['sent', 'viewed', 'overdue'].includes(i.status))
-    .reduce((s, i) => s + Number(i.balance_due), 0);
+  const { data: sm } = useInvoiceSummary();
+  const approvedTotal = sm?.approved_unfunded_amount ?? 0;
+  const approvedCount = sm?.approved_unfunded_count ?? 0;
+  const waiting = sm?.awaiting_amount ?? 0;
 
   return (
     <div className="page max-w-4xl mx-auto">
@@ -942,7 +935,7 @@ function GetPaidNow() {
           <p className="text-sm text-slate-700 mt-1">
             {approvedTotal > 0
               ? <>Up to <strong className="tabular-nums">{formatCurrency(approvedTotal * ADVANCE_MAX)}</strong> could be in your account now
-                 ({approved.length} invoice{approved.length === 1 ? '' : 's'}).</>
+                 ({approvedCount} invoice{approvedCount === 1 ? '' : 's'}).</>
               : 'Mark invoices approved in Invoices as agencies approve them, and they show up here.'}
           </p>
         </div>

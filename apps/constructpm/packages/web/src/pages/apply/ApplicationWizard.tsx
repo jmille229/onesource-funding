@@ -355,7 +355,7 @@ export function ApplicationWizard({ state, justStarted, onChange }: {
                   </div>
                 )}
                 <p className="text-xs text-slate-500">
-                  You’ll add the owner’s Social Security number and the signer’s driver’s license on the next step.
+                  You’ll add the signer’s driver’s license on the next step.
                 </p>
               </>
             )}

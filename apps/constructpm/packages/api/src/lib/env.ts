@@ -62,6 +62,11 @@ const envSchema = z.object({
   S3_SECRET_KEY: z.string().min(1, 'S3_SECRET_KEY is required'),
   S3_BUCKET_FILES: z.string().default('constructpm-files'),
   S3_FORCE_PATH_STYLE: zBool(true),
+  // Ask the store to encrypt each object at rest (SSE-S3, "AES256"). AWS S3,
+  // Backblaze B2 and MinIO accept it; set "none" for a store that encrypts
+  // everything by default and rejects the header (e.g. Cloudflare R2,
+  // DigitalOcean Spaces). Default: on in production.
+  S3_SERVER_SIDE_ENCRYPTION: z.enum(['AES256', 'none']).optional(),
   // Browser-reachable object-store URL. Set this only when the store is exposed
   // publicly (real S3, or MinIO on its own hostname) — it switches downloads to
   // presigned URLs. Unset means downloads stream through the API, which is what
@@ -100,7 +105,7 @@ const envSchema = z.object({
   JWT_ADMIN_AUDIENCE: z.string().default('constructpm-admin'),
 
   // ─── Funding applications (apply.os-funding.com) ───────────────────────────
-  // 32-byte key, base64, that encrypts EIN/SSN values before they are stored.
+  // 32-byte key, base64, that encrypts EIN values (and two-step sign-in secrets) before they are stored.
   // Generate: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
   // Unset: the public application is switched off (it returns 503), nothing
   // else is affected. Losing it makes stored numbers unreadable, so back it up.
@@ -109,6 +114,20 @@ const envSchema = z.object({
     'APPLICATION_DATA_KEY must be 32 bytes, base64-encoded'),
   // Public address of the application, for resume links in email.
   APPLY_URL: z.string().default('http://localhost:5173/apply'),
+
+  // Error tracking (Sentry or compatible). Unset: off.
+  SENTRY_DSN: z.string().url().optional().or(z.literal('').transform(() => undefined)),
+  SENTRY_ENVIRONMENT: z.string().optional(),
+  // Which build is running (the image tag / commit), so errors name a release.
+  APP_RELEASE: z.string().optional(),
+
+  // Malware scanning of uploads with ClamAV (clamd). Unset: no scanning, and
+  // uploads are marked clean only if SKIP_VIRUS_SCAN is true.
+  CLAMAV_HOST: z.string().optional(),
+  CLAMAV_PORT: z.coerce.number().default(3310),
+
+  // Business time zone: what "today" means for default dates and fee days.
+  BUSINESS_TZ: z.string().default('America/New_York'),
 
   // Feature flags
   SKIP_VIRUS_SCAN: zBool(false),

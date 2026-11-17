@@ -2,19 +2,27 @@ import { Router } from 'express';
 import { z } from 'zod';
 import argon2 from 'argon2';
 import { adminPool, withAdminTransaction, audit } from '../../lib/admin-db.js';
-import { signPlatformToken } from '../../lib/jwt.js';
+import { signPlatformToken, signMfaChallenge, verifyMfaChallenge } from '../../lib/jwt.js';
+import { decryptSecret, encryptSecret, secretsConfigured } from '../../lib/secrets.js';
+import {
+  newTotpSecret, otpauthUri, verifyTotp, newRecoveryCodes, hashRecoveryCode, looksLikeRecoveryCode,
+} from '../../lib/mfa.js';
 import { buildUpdateSet } from '../../lib/sql.js';
 import { isPlaceholderInvoiceNumber } from '../factoring/underwriting.js';
 import { scoreRequest } from '../factoring/underwriting.service.js';
 import { parseDelimited, toAdvancePayload } from './import-map.js';
 import { planImport, type PlanItem } from './import-plan.js';
 import { parsePagination } from '../../lib/pagination.js';
-import { deliverAttachment } from '../../lib/storage.js';
+import { deliverAttachment, uploadEncryption } from '../../lib/storage.js';
+import { env } from '../../lib/env.js';
+import { mailEnabled, OPS_INBOX, sendTestEmail } from '../../lib/mailer.js';
+import { monitoringEnabled } from '../../lib/monitoring.js';
+import { scanningEnabled, clamdPing } from '../../lib/scanner.js';
 import { applicationsAdminRouter } from './applications.admin.js';
 import { clientsAdminRouter } from './clients.admin.js';
 import { APPROVAL_DOC_TYPES } from '@constructpm/shared';
 import {
-  asyncHandler, validate, authenticatePlatform, authRateLimit,
+  asyncHandler, validate, authenticatePlatform, authRateLimit, consumeMfaAttempt, operatorRateLimit, logger, refreshRateLimit,
 } from '../../middleware/index.js';
 
 export const adminRouter = Router();
@@ -40,8 +48,8 @@ adminRouter.post(
   asyncHandler(async (req, res) => {
     const { email, password } = req.body as { email: string; password: string };
 
-    const r = await pool().query<{ id: string; email: string; password_hash: string; is_active: boolean }>(
-      `SELECT id, email, password_hash, is_active FROM platform_users WHERE LOWER(email) = LOWER($1)`,
+    const r = await pool().query<{ id: string; email: string; password_hash: string; is_active: boolean; mfa_enabled: boolean }>(
+      `SELECT id, email, password_hash, is_active, mfa_enabled FROM platform_users WHERE LOWER(email) = LOWER($1)`,
       [email]);
     const user = r.rows[0];
 
@@ -57,21 +65,129 @@ adminRouter.post(
       return;
     }
 
-    await pool().query(`UPDATE platform_users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
-
+    // The password alone never opens the console: a code from an authenticator
+    // app is always the second step, and the first sign-in sets it up.
+    const purpose = user.mfa_enabled ? 'verify' : 'setup';
     res.json({
       data: {
-        access_token: signPlatformToken({ userId: user.id, email: user.email }),
-        token_type: 'Bearer',
-        expires_in: 3600,
-        user: { id: user.id, email: user.email },
+        [user.mfa_enabled ? 'mfa_required' : 'mfa_setup_required']: true,
+        challenge: signMfaChallenge({ sub: user.id, kind: 'operator', purpose }),
       },
     });
   })
 );
 
-// Everything below requires an operator token.
-adminRouter.use(authenticatePlatform);
+// ─── Operator two-step sign-in ────────────────────────────────────────────────
+const opFail = (status: number, message: string, code?: string) => Object.assign(new Error(message), { status, code });
+const opChallenge = z.object({ challenge: z.string().min(20).max(2000) });
+const opCode = opChallenge.extend({ code: z.string().trim().min(6).max(20) });
+
+function readOpChallenge(token: string, purpose: 'verify' | 'setup') {
+  try {
+    const c = verifyMfaChallenge(token, 'operator');
+    if (c.purpose !== purpose) throw new Error('wrong purpose');
+    return c;
+  } catch {
+    throw opFail(401, 'That sign-in took too long. Sign in again.', 'invalid_challenge');
+  }
+}
+
+async function operatorSession(userId: string) {
+  const r = await pool().query<{ id: string; email: string }>(
+    `UPDATE platform_users SET last_login_at = NOW() WHERE id = $1 AND is_active RETURNING id, email`, [userId]);
+  const u = r.rows[0];
+  if (!u) throw opFail(401, 'Sign in again.', 'invalid_challenge');
+  return {
+    access_token: signPlatformToken({ userId: u.id, email: u.email }),
+    token_type: 'Bearer', expires_in: 3600, user: { id: u.id, email: u.email },
+  };
+}
+
+adminRouter.post('/auth/mfa/verify', refreshRateLimit, validate(opCode), asyncHandler(async (req, res) => {
+  const b = req.body as z.infer<typeof opCode>;
+  const c = readOpChallenge(b.challenge, 'verify');
+  if (!(await consumeMfaAttempt(`op:${c.sub}`))) throw opFail(429, 'Too many tries. Wait a few minutes and try again.');
+  const u = (await pool().query<{ mfa_secret: string | null; mfa_enabled: boolean }>(
+    `SELECT mfa_secret, mfa_enabled FROM platform_users WHERE id = $1 AND is_active`, [c.sub])).rows[0];
+  if (!u?.mfa_enabled) throw opFail(401, 'Sign in again.', 'invalid_challenge');
+  let ok = false;
+  if (looksLikeRecoveryCode(b.code)) {
+    const r = await pool().query(
+      `UPDATE platform_mfa_recovery_codes SET used_at = NOW()
+        WHERE id = (SELECT id FROM platform_mfa_recovery_codes
+                     WHERE platform_user_id = $1 AND code_hash = $2 AND used_at IS NULL LIMIT 1)`,
+      [c.sub, hashRecoveryCode(b.code)]);
+    ok = (r.rowCount ?? 0) > 0;
+  } else if (u.mfa_secret) {
+    const step = verifyTotp(decryptSecret(u.mfa_secret), b.code);
+    if (step !== null) {
+      const r = await pool().query(
+        `UPDATE platform_users SET mfa_last_step = $2 WHERE id = $1 AND mfa_last_step < $2`, [c.sub, step]);
+      ok = (r.rowCount ?? 0) > 0;
+    }
+  }
+  if (!ok) throw opFail(401, 'That code didn’t work. Check your authenticator app and try again.', 'invalid_code');
+  res.json({ data: await operatorSession(c.sub) });
+}));
+
+adminRouter.post('/auth/mfa/setup/start', refreshRateLimit, validate(opChallenge), asyncHandler(async (req, res) => {
+  if (!secretsConfigured) throw opFail(503, 'Set APPLICATION_DATA_KEY on the server to enable two-step sign-in.');
+  const c = readOpChallenge((req.body as { challenge: string }).challenge, 'setup');
+  const secret = newTotpSecret();
+  const r = await pool().query<{ email: string }>(
+    `UPDATE platform_users SET mfa_secret = $2 WHERE id = $1 AND NOT mfa_enabled AND is_active RETURNING email`,
+    [c.sub, encryptSecret(secret)]);
+  if (!r.rows[0]) throw opFail(409, 'Two-step sign-in is already set up. Sign in again.', 'already_enabled');
+  res.json({ data: { secret, otpauth_uri: otpauthUri(secret, r.rows[0].email, 'One Source console') } });
+}));
+
+adminRouter.post('/auth/mfa/setup/finish', refreshRateLimit, validate(opCode), asyncHandler(async (req, res) => {
+  const b = req.body as z.infer<typeof opCode>;
+  const c = readOpChallenge(b.challenge, 'setup');
+  if (!(await consumeMfaAttempt(`op:${c.sub}`))) throw opFail(429, 'Too many tries. Wait a few minutes and try again.');
+  const u = (await pool().query<{ mfa_secret: string | null }>(
+    `SELECT mfa_secret FROM platform_users WHERE id = $1 AND NOT mfa_enabled AND is_active`, [c.sub])).rows[0];
+  if (!u?.mfa_secret) throw opFail(409, 'Start setting up two-step sign-in again.', 'no_pending_setup');
+  const step = verifyTotp(decryptSecret(u.mfa_secret), b.code);
+  if (step === null) throw opFail(401, 'That code didn’t work. Check the time on your phone and try again.', 'invalid_code');
+  const codes = newRecoveryCodes();
+  await withAdminTransaction(async (t) => {
+    await t.query(`UPDATE platform_users SET mfa_enabled = TRUE, mfa_last_step = $2 WHERE id = $1`, [c.sub, step]);
+    await t.query(`DELETE FROM platform_mfa_recovery_codes WHERE platform_user_id = $1`, [c.sub]);
+    await t.query(`INSERT INTO platform_mfa_recovery_codes (platform_user_id, code_hash) SELECT $1, unnest($2::text[])`,
+      [c.sub, codes.map(hashRecoveryCode)]);
+  });
+  logger.info({ operator: c.sub }, 'Operator two-step sign-in turned on');
+  res.json({ data: { ...(await operatorSession(c.sub)), recovery_codes: codes } });
+}));
+
+// Everything below requires an operator token, and is rate limited per operator.
+adminRouter.use(authenticatePlatform, operatorRateLimit);
+
+// ─── System status ────────────────────────────────────────────────────────────
+// What's switched on in this deployment, so a missing setting is visible in
+// the console rather than discovered when an email never arrives.
+adminRouter.get('/system', asyncHandler(async (_req, res) => {
+  let storageHost = env.S3_ENDPOINT;
+  try { storageHost = new URL(env.S3_ENDPOINT).host; } catch { /* keep as is */ }
+  res.json({
+    data: {
+      email: { configured: mailEnabled, from: env.EMAIL_FROM, ops_inbox: OPS_INBOX },
+      error_tracking: monitoringEnabled,
+      malware_scanning: { configured: scanningEnabled, reachable: scanningEnabled ? await clamdPing() : false },
+      encryption_key: secretsConfigured,
+      storage: { host: storageHost, local_minio: /(^|\/\/)minio(:|$)/.test(env.S3_ENDPOINT) || storageHost.startsWith('minio'),
+                 encrypt_at_rest: uploadEncryption() === 'AES256' },
+      business_time_zone: env.BUSINESS_TZ,
+      release: env.APP_RELEASE ?? null,
+    },
+  });
+}));
+
+adminRouter.post('/system/test-email', asyncHandler(async (req, res) => {
+  await sendTestEmail(req.platform.email);
+  res.json({ data: { sent_to: req.platform.email } });
+}));
 
 // Funding applications (apply.os-funding.com) and their requirements.
 adminRouter.use(applicationsAdminRouter);

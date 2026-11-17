@@ -5,10 +5,10 @@ import {
   FolderKanban, ArrowRight, Banknote, Undo2, FileEdit, Hourglass, CalendarX, CheckCircle2,
   AlertTriangle, FileText,
 } from 'lucide-react';
-import { api, formatCurrency, formatDate, todayISO } from '../lib/api';
+import { api, formatCurrency, formatDate } from '../lib/api';
 import { useAuthStore } from '../stores/auth.store';
 import type { Job } from '@constructpm/shared';
-import { invoiceStatusBadge, invoiceStatusLabel, isAwaitingAgency, daysSince, fundedBadge } from '../lib/invoices';
+import { invoiceStatusBadge, invoiceStatusLabel, fundedBadge, useInvoiceSummary, type InvoiceSummary } from '../lib/invoices';
 import { useFundingAccount, ADVANCE_MAX } from '../lib/funding';
 import { useWorkspace } from '../components/layout/AppLayout';
 import { InvoiceDrawer } from '../components/invoices/InvoiceDrawer';
@@ -43,54 +43,35 @@ export function DashboardPage() {
     queryKey: ['company-settings', user?.company_id],
     queryFn: () => api.get('/settings/company').then((r) => r.data.data as { name: string }),
   });
-  const { data: invoices = [] } = useQuery<InvoiceRow[]>({
-    queryKey: ['invoices', ''],
-    queryFn: () => api.get('/invoices?status=').then((r) => r.data.data),
-  });
-  const { data: requests = [] } = useQuery<{ invoice_id: string; status: string }[]>({
-    queryKey: ['factoring-requests'],
-    queryFn: () => api.get('/factoring/requests').then((r) => r.data.data).catch(() => []),
-    enabled: funding.isActive,
+  // Totals over every invoice, from the server; and the six most recently logged.
+  const { data: sm } = useInvoiceSummary();
+  const { data: recent = [] } = useQuery<InvoiceRow[]>({
+    queryKey: ['invoices', 'recent'],
+    queryFn: () => api.get('/invoices', { params: { sort: 'created', per_page: 6 } }).then((r) => r.data.data),
   });
 
-  const today = todayISO();
-  const open = invoices.filter((i) => !['draft', 'paid', 'void'].includes(i.status));
-  const sum = (rows: InvoiceRow[]) => rows.reduce((s, i) => s + Number(i.balance_due), 0);
-  const awaiting = invoices.filter((i) => isAwaitingAgency(i.status));
-  const approved = invoices.filter((i) => ['approved', 'partially_paid'].includes(i.status) && Number(i.balance_due) > 0);
-  const billedThisMonth = invoices
-    .filter((i) => !['draft', 'void'].includes(i.status) && i.issue_date.slice(0, 7) === today.slice(0, 7))
-    .reduce((s, i) => s + Number(i.total), 0);
-
-  // Needs attention, most actionable first.
-  const returned = invoices.filter((i) => i.status === 'returned');
-  const drafts = invoices.filter((i) => i.status === 'draft');
-  const slow = awaiting.filter((i) => (daysSince(i.submitted_on) ?? 0) > SLOW_APPROVAL_DAYS);
-  // Funded ones aren't the client's to chase: One Source collects open ones
-  // (the recourse warning covers those), and a settled one's leftover
-  // balance is a short payment already squared away through the reserve.
-  const pastDue = approved.filter((i) => i.due_date.slice(0, 10) < today && !i.funded_id);
-  const inFlight = new Set(requests.filter((r) => ['submitted', 'under_review', 'approved'].includes(r.status)).map((r) => r.invoice_id));
-  const readyToFund = invoices.filter((i) => i.status === 'approved' && Number(i.balance_due) > 0 && !i.funded_id && !inFlight.has(i.id));
   const nearingRecourse = Number(funding.summary?.['approaching_recourse'] ?? 0);
-  const prospectApproved = funding.isProspect ? invoices.filter((i) => i.status === 'approved' && Number(i.balance_due) > 0) : [];
+  const n = (k: keyof InvoiceSummary) => Number(sm?.[k] ?? 0);
 
+  // Needs attention, most actionable first. Past due leaves out funded
+  // invoices: One Source collects open ones (the recourse warning covers
+  // those), and a settled one's leftover balance is a short payment already
+  // squared away through the reserve.
   const attention: { key: string; icon: typeof Undo2; tone: string; text: string; sub?: string; to: string }[] = [];
-  if (returned.length) attention.push({ key: 'returned', icon: Undo2, tone: 'text-orange-600',
-    text: `${returned.length} returned by the agency`, sub: 'Fix and resubmit', to: '/invoices?status=returned' });
+  if (n('returned_count')) attention.push({ key: 'returned', icon: Undo2, tone: 'text-orange-600',
+    text: `${n('returned_count')} returned by the agency`, sub: 'Fix and resubmit', to: '/invoices?status=returned' });
   if (nearingRecourse) attention.push({ key: 'recourse', icon: AlertTriangle, tone: 'text-orange-600',
     text: `${nearingRecourse} funded invoice${nearingRecourse === 1 ? '' : 's'} nearing recourse`, sub: 'Chase the agency for payment', to: '/funding' });
-  if (pastDue.length) attention.push({ key: 'pastdue', icon: CalendarX, tone: 'text-red-600',
-    text: `${pastDue.length} approved but past due`, sub: `${formatCurrency(sum(pastDue))} still unpaid`, to: '/invoices?status=approved' });
-  if (slow.length) attention.push({ key: 'slow', icon: Hourglass, tone: 'text-amber-600',
-    text: `${slow.length} waiting over ${SLOW_APPROVAL_DAYS} days for approval`, sub: 'Worth a call to the agency', to: '/invoices?status=sent' });
-  if (funding.isActive && readyToFund.length) attention.push({ key: 'fund', icon: Banknote, tone: 'text-green-600',
-    text: `${readyToFund.length} approved invoice${readyToFund.length === 1 ? '' : 's'} ready to fund`,
-    sub: `Up to ${formatCurrency(sum(readyToFund) * ADVANCE_MAX)}`, to: '/invoices?view=eligible' });
-  if (drafts.length) attention.push({ key: 'drafts', icon: FileEdit, tone: 'text-slate-500',
-    text: `${drafts.length} not submitted yet`, sub: 'Mark them submitted once billed', to: '/invoices?status=draft' });
+  if (n('past_due_count')) attention.push({ key: 'pastdue', icon: CalendarX, tone: 'text-red-600',
+    text: `${n('past_due_count')} approved but past due`, sub: `${formatCurrency(n('past_due_amount'))} still unpaid`, to: '/invoices?status=approved' });
+  if (n('slow_count')) attention.push({ key: 'slow', icon: Hourglass, tone: 'text-amber-600',
+    text: `${n('slow_count')} waiting over ${SLOW_APPROVAL_DAYS} days for approval`, sub: 'Worth a call to the agency', to: '/invoices?status=sent' });
+  if (funding.isActive && n('eligible_count')) attention.push({ key: 'fund', icon: Banknote, tone: 'text-green-600',
+    text: `${n('eligible_count')} approved invoice${n('eligible_count') === 1 ? '' : 's'} ready to fund`,
+    sub: `Up to ${formatCurrency(n('eligible_amount') * ADVANCE_MAX)}`, to: '/invoices?view=eligible' });
+  if (n('draft_count')) attention.push({ key: 'drafts', icon: FileEdit, tone: 'text-slate-500',
+    text: `${n('draft_count')} not submitted yet`, sub: 'Mark them submitted once billed', to: '/invoices?status=draft' });
 
-  const recent = [...invoices].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 6);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
@@ -104,7 +85,7 @@ export function DashboardPage() {
       </div>
 
       {/* The way in, for a company that doesn't factor yet. */}
-      {funding.isProspect && sum(prospectApproved) > 0 && (
+      {funding.isProspect && n('approved_unfunded_amount') > 0 && (
         <Link to="/funding"
               className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-emerald-200 bg-gradient-to-r from-emerald-50 to-white p-4 sm:p-5 hover:border-emerald-300">
           <div className="w-10 h-10 rounded-lg bg-emerald-600 flex items-center justify-center flex-shrink-0">
@@ -112,10 +93,10 @@ export function DashboardPage() {
           </div>
           <div className="flex-1">
             <p className="font-semibold text-slate-900">
-              {formatCurrency(sum(prospectApproved))} approved by agencies and not yet paid
+              {formatCurrency(n('approved_unfunded_amount'))} approved by agencies and not yet paid
             </p>
             <p className="text-sm text-slate-600">
-              Get up to {formatCurrency(sum(prospectApproved) * ADVANCE_MAX)} of it now with One Source — often the same day.
+              Get up to {formatCurrency(n('approved_unfunded_amount') * ADVANCE_MAX)} of it now with One Source — often the same day.
             </p>
           </div>
           <span className="btn btn-sm bg-emerald-600 text-white self-start sm:self-center">
@@ -126,11 +107,11 @@ export function DashboardPage() {
 
       {/* Invoices */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Stat label="Outstanding" value={formatCurrency(sum(open))} sub={`${open.length} invoice${open.length === 1 ? '' : 's'} with agencies`} to="/invoices" />
-        <Stat label="Waiting on approval" value={formatCurrency(sum(awaiting))} sub={`${awaiting.length} submitted`} to="/invoices?status=sent" />
-        <Stat label="Approved, awaiting payment" value={formatCurrency(sum(approved))} sub={`${approved.length} approved`} to="/invoices?status=approved" />
-        <Stat label="Billed this month" value={formatCurrency(billedThisMonth)}
-              sub={new Date(`${today}T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' })} />
+        <Stat label="Outstanding" value={formatCurrency(n('outstanding_amount'))} sub={`${n('outstanding_count')} invoice${n('outstanding_count') === 1 ? '' : 's'} with agencies`} to="/invoices" />
+        <Stat label="Waiting on approval" value={formatCurrency(n('awaiting_amount'))} sub={`${n('awaiting_count')} submitted`} to="/invoices?status=sent" />
+        <Stat label="Approved, awaiting payment" value={formatCurrency(n('payable_amount'))} sub={`${n('payable_count')} approved`} to="/invoices?status=approved" />
+        <Stat label="Billed this month" value={formatCurrency(n('billed_this_month'))}
+              sub={new Date().toLocaleDateString('en-US', { month: 'long' })} />
       </div>
 
       {/* Funding, for a company that factors */}
@@ -162,8 +143,8 @@ export function DashboardPage() {
           {attention.length === 0 ? (
             <div className="px-5 py-8 text-center text-slate-500">
               <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-green-500" />
-              <p className="text-sm">{invoices.length ? 'Nothing needs you right now.' : 'Log an invoice to start tracking it.'}</p>
-              {!invoices.length && <Link to="/invoices" className="btn-primary btn-sm mt-3 inline-flex">Go to Invoices</Link>}
+              <p className="text-sm">{n('total_count') ? 'Nothing needs you right now.' : 'Log an invoice to start tracking it.'}</p>
+              {!n('total_count') && <Link to="/invoices" className="btn-primary btn-sm mt-3 inline-flex">Go to Invoices</Link>}
             </div>
           ) : (
             <ul className="divide-y divide-slate-100">

@@ -103,3 +103,28 @@ export function verifyPlatformToken(token: string): PlatformJwtPayload {
     audience: env.JWT_ADMIN_AUDIENCE,
   }) as PlatformJwtPayload;
 }
+
+// ─── Two-step sign-in challenges ──────────────────────────────────────────────
+// After a correct password, sign-in isn't finished until a code is entered.
+// This short-lived token carries "password checked for user X" between the two
+// steps. Its own audience means it can never be used as a session token.
+export type MfaChallengeKind = 'tenant' | 'operator';
+export type MfaChallengePurpose = 'verify' | 'setup';
+export interface MfaChallenge { sub: string; kind: MfaChallengeKind; purpose: MfaChallengePurpose }
+
+const mfaAudience = (kind: MfaChallengeKind) => `${env.JWT_AUDIENCE}:mfa:${kind}`;
+
+export function signMfaChallenge(c: MfaChallenge): string {
+  const iat = Math.floor(Date.now() / 1000);
+  return jwt.sign(
+    { sub: c.sub, purpose: c.purpose, jti: randomUUID(), iss: env.JWT_ISSUER, aud: mfaAudience(c.kind), iat,
+      exp: iat + (c.purpose === 'setup' ? 15 * 60 : 5 * 60) },
+    SIGN_KEY, { algorithm: ALGORITHM as jwt.Algorithm });
+}
+
+export function verifyMfaChallenge(token: string, kind: MfaChallengeKind): MfaChallenge {
+  const p = jwt.verify(token, VERIFY_KEY, {
+    algorithms: [ALGORITHM as jwt.Algorithm], issuer: env.JWT_ISSUER, audience: mfaAudience(kind),
+  }) as { sub: string; purpose: MfaChallengePurpose };
+  return { sub: p.sub, kind, purpose: p.purpose };
+}

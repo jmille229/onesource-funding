@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { env } from './lib/env.js';
+import { reportError, flushReports } from './lib/monitoring.js';
+import { mailEnabled, opsNotificationsEnabled } from './lib/mailer.js';
 import { connectRedis } from './lib/redis.js';
 import { writePool } from './lib/db.js';
 import {
@@ -13,10 +15,13 @@ import {
   notFound,
   authenticate,
   tenantRateLimit,
+  logger,
   requestDeadline,
 } from './middleware/index.js';
 
 import { authRouter }          from './modules/auth/auth.router.js';
+import { securityRouter }      from './modules/auth/security.router.js';
+import { telemetryRouter }     from './modules/telemetry/telemetry.router.js';
 import { applyRouter }         from './modules/apply/apply.router.js';
 import { jobsRouter }          from './modules/jobs/jobs.router.js';
 import { tasksRouter }         from './modules/tasks/tasks.router.js';
@@ -92,6 +97,8 @@ app.get('/health/ready', async (_req, res) => {
 
 // ─── Public routes ────────────────────────────────────────────────────────────
 app.use('/api/auth', authRouter);
+app.use('/api/auth', securityRouter);
+app.use('/api/telemetry', telemetryRouter);
 // Funding applications: no account. Scoped by resume token, not by tenant.
 app.use('/api/apply', applyRouter);
 
@@ -157,11 +164,21 @@ async function start() {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT',  () => shutdown('SIGINT'));
 
-  // Catch unhandled rejections — log and exit so the process manager restarts
+  // Catch unhandled rejections — report, log and exit so the process manager restarts
   process.on('unhandledRejection', (reason) => {
     console.error('Unhandled rejection:', reason);
-    process.exit(1);
+    reportError(reason, { kind: 'unhandledRejection' });
+    void flushReports().finally(() => process.exit(1));
   });
+
+  // Say so loudly when production can't send email: invites, password resets
+  // and One Source's own alerts all depend on it.
+  if (env.NODE_ENV === 'production' && !mailEnabled) {
+    logger.warn('EMAIL IS NOT CONFIGURED (SMTP_HOST unset): invites, password resets and alerts are not being sent');
+  }
+  if (env.NODE_ENV === 'production' && !opsNotificationsEnabled) {
+    logger.warn('OPS_NOTIFICATION_EMAIL unset: One Source will not be emailed about funding requests or applications');
+  }
 }
 
 start().catch(err => { console.error('Startup failed:', err); process.exit(1); });

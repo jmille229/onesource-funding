@@ -175,13 +175,25 @@ describe.runIf(enabled)('funding applications (V013)', () => {
     const a = await startApplication();
     await asApplicant(a.id,
       `INSERT INTO funding_application_items (application_id, requirement_key, kind, value_encrypted, value_last4)
-       VALUES ($1,'owner_ssn','ssn','v1:ciphertext','6789')`, [a.id]);
+       VALUES ($1,'ein','ein','v1:ciphertext','6789')`, [a.id]);
     const masked = await asApplicant<{ value_last4: string }>(a.id, `SELECT value_last4 FROM funding_application_items`);
     expect(masked).toEqual([{ value_last4: '6789' }]);
     await expect(asApplicant(a.id, `SELECT value_encrypted FROM funding_application_items`))
       .rejects.toThrow(/permission denied/i);
     await expect(asApplicant(a.id, `SELECT * FROM funding_application_items`))
       .rejects.toThrow(/permission denied/i);
+  });
+
+  it('refuses Social Security numbers outright (V019)', async () => {
+    const a = await startApplication();
+    await expect(asApplicant(a.id,
+      `INSERT INTO funding_application_items (application_id, requirement_key, kind, value_encrypted, value_last4)
+       VALUES ($1,'owner_ssn','ssn','v1:ciphertext','6789')`, [a.id])).rejects.toThrow(/no_ssn/);
+    await expect(owner.query(
+      `INSERT INTO application_requirements (key, label, kind) VALUES ('owner_ssn_again', 'SSN', 'ssn')`))
+      .rejects.toThrow(/no_ssn/);
+    const left = await owner.query(`SELECT count(*)::int AS n FROM application_requirements WHERE kind = 'ssn'`);
+    expect(left.rows[0].n).toBe(0);
   });
 
   it('stops adding or removing items after submission, and never touches One Source’s', async () => {

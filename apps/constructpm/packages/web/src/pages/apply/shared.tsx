@@ -31,7 +31,7 @@ export function ApplyShell({ children }: { children: React.ReactNode }) {
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-5 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between text-xs text-slate-500">
           <p className="flex items-center gap-1.5">
             <Lock className="w-3.5 h-3.5" aria-hidden />
-            Secure application. Tax ID and Social Security numbers are encrypted when you save them.
+            Secure application. Your business tax ID is encrypted when you save it.
           </p>
           <p>
             © {new Date().getFullYear()} One Source Funding ·{' '}

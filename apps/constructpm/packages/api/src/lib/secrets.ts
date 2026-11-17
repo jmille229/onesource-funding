@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { env } from './env.js';
 
 /**
- * Field-level encryption for sensitive application numbers (EIN, SSN).
+ * Field-level encryption for sensitive application numbers (the business EIN).
  *
  * AES-256-GCM with a random 12-byte IV per value. Stored as
  * "v1:<iv>:<tag>:<ciphertext>" (base64), so a later key or algorithm can be
@@ -48,25 +48,17 @@ export function nineDigits(raw: string): string | null {
 }
 
 /**
- * Plausibility only — the real check happens in underwriting. Rejects the
- * patterns the SSA never issues (area 000/666/9xx, group 00, serial 0000), and
- * EINs with an unassigned two-digit prefix.
+ * Plausibility only — the real check happens in underwriting. Rejects EINs
+ * with an unassigned two-digit prefix. (SSNs are no longer collected — V019.)
  */
-export function validateSecret(kind: 'ein' | 'ssn', digits: string): string | null {
-  if (kind === 'ssn') {
-    const area = digits.slice(0, 3), group = digits.slice(3, 5), serial = digits.slice(5);
-    if (area === '000' || area === '666' || area.startsWith('9') || group === '00' || serial === '0000') {
-      return 'That doesn’t look like a valid Social Security number';
-    }
-    return null;
-  }
+export function validateSecret(_kind: 'ein', digits: string): string | null {
   const prefix = Number(digits.slice(0, 2));
   const unassigned = [0, 7, 8, 9, 17, 18, 19, 28, 29, 49, 69, 70, 78, 79, 89, 96, 97];
   if (unassigned.includes(prefix)) return 'That doesn’t look like a valid EIN';
   return null;
 }
 
-export function formatMasked(kind: 'ein' | 'ssn', last4: string | null): string | null {
+export function formatMasked(_kind: 'ein', last4: string | null): string | null {
   if (!last4) return null;
-  return kind === 'ein' ? `••-•••${last4}` : `•••-••-${last4}`;
+  return `••-•••${last4}`;
 }

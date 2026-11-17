@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
 import pino from 'pino';
+import { reportError } from '../lib/monitoring.js';
 import { pinoHttp } from 'pino-http';
 import { z } from 'zod';
 import { RateLimiterRedis, RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
@@ -183,13 +184,61 @@ export function refreshRateLimit(req: Request, res: Response, next: NextFunction
     { error: 'too_many_requests', message: 'Too many session refreshes. Try again shortly.' });
 }
 
+// Two-step sign-in codes: per account, not per IP, so guessing is bounded no
+// matter how many addresses it comes from. Six tries per five minutes; a
+// 6-digit code then takes months to guess at the limit.
+const mfaLimiter = makeRateLimiter({ points: 6, duration: 300, keyPrefix: 'rl:mfa' });
+export async function consumeMfaAttempt(key: string): Promise<boolean> {
+  try {
+    await mfaLimiter.consume(key);
+    return true;
+  } catch (rej) {
+    if (rej instanceof RateLimiterRes) return false;
+    logger.warn({ err: rej }, 'mfa limiter unavailable — failing open');
+    return true;
+  }
+}
+
+// Password-reset and verification emails: per address, so one inbox can't be
+// flooded from many IPs.
+const emailLimiter = makeRateLimiter({ points: 5, duration: 3600, keyPrefix: 'rl:email' });
+export async function consumeEmailSend(key: string): Promise<boolean> {
+  try {
+    await emailLimiter.consume(key.toLowerCase());
+    return true;
+  } catch (rej) {
+    if (rej instanceof RateLimiterRes) return false;
+    return true;
+  }
+}
+
+// Operator console: per operator. Generous — the console loads several lists
+// at once — but bounded, so a stolen operator session can't scrape at speed.
+const operatorLimiter = makeRateLimiter({ points: 600, duration: 60, keyPrefix: 'rl:operator' });
+export function operatorRateLimit(req: Request, res: Response, next: NextFunction) {
+  const key = req.platform?.userId ?? req.ip ?? 'unknown';
+  limit(operatorLimiter, key, res, next,
+    { error: 'rate_limit_exceeded', message: 'Too many requests. Please slow down.' });
+}
+
+// Browser error reports (unauthenticated): enough for a page that keeps
+// crashing to be heard, not enough to flood error tracking.
+const clientErrorLimiter = makeRateLimiter({ points: 30, duration: 600, keyPrefix: 'rl:clienterr' });
+export function clientErrorRateLimit(req: Request, res: Response, next: NextFunction) {
+  limit(clientErrorLimiter, req.ip ?? 'unknown', res, next,
+    { error: 'too_many_requests', message: 'Too many reports.' });
+}
+
 // ─── Request timeout ─────────────────────────────────────────────────────────
 export function requestDeadline(timeoutMs = 30_000, uploadTimeoutMs = 5 * 60_000) {
   return (req: Request, res: Response, next: NextFunction) => {
     // File uploads get longer: a 25 MB phone photo over a slow mobile uplink
     // takes well over 30 seconds, and timing it out mid-stream left the file
     // stored while the browser was told it failed.
-    const ms = req.is('multipart/form-data') ? uploadTimeoutMs : timeoutMs;
+    // So do large Advance Book imports: a few hundred rows run thousands of
+    // statements in one transaction (each still bound by statement_timeout).
+    const long = req.is('multipart/form-data') || req.path.startsWith('/api/admin/invoices/import');
+    const ms = long ? uploadTimeoutMs : timeoutMs;
     const timer = setTimeout(() => {
       if (!res.headersSent) {
         res.status(503).json({ error: 'timeout', message: 'Request timed out' });
@@ -240,6 +289,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
 
   if (status >= 500) {
     logger.error({ err, path: req.path, correlation_id: req.correlationId }, message);
+    reportError(err, { method: req.method, path: req.path, correlation_id: req.correlationId });
   }
 
   res.status(status).json({

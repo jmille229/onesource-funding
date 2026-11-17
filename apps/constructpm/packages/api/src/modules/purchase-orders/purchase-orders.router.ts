@@ -4,6 +4,7 @@ import { writePool, readPool, createRlsClient, withTransaction } from '../../lib
 import { parsePagination } from '../../lib/pagination.js';
 import { enumParam, uuidParam } from '../../lib/query-params.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
+import { businessToday } from '../../lib/dates.js';
 
 export const purchaseOrdersRouter = Router();
 
@@ -13,7 +14,7 @@ const poSchema = z.object({
   job_id: z.string().uuid(),
   vendor_id: z.string().uuid(),
   description: z.string().optional().nullable(),
-  issue_date: z.string().default(() => new Date().toISOString().split('T')[0]!),
+  issue_date: z.string().default(() => businessToday()),
   expected_delivery: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
   items: z.array(z.object({

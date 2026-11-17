@@ -15,6 +15,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
-    setupFiles: [],
+    // Placeholder server settings so env.ts loads in CI (see the file).
+    setupFiles: ['./src/test-env.ts'],
   },
 });
