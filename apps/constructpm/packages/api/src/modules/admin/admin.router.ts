@@ -15,7 +15,8 @@ import { planImport, type PlanItem } from './import-plan.js';
 import { parsePagination } from '../../lib/pagination.js';
 import { deliverAttachment, uploadEncryption } from '../../lib/storage.js';
 import { env } from '../../lib/env.js';
-import { mailEnabled, OPS_INBOX, sendTestEmail } from '../../lib/mailer.js';
+import { sendTestEmail } from '../../lib/mailer.js';
+import { emailStatus, googleMailAdminRouter } from './google-mail.js';
 import { monitoringEnabled } from '../../lib/monitoring.js';
 import { scanningEnabled, clamdPing } from '../../lib/scanner.js';
 import { applicationsAdminRouter } from './applications.admin.js';
@@ -172,7 +173,7 @@ adminRouter.get('/system', asyncHandler(async (_req, res) => {
   try { storageHost = new URL(env.S3_ENDPOINT).host; } catch { /* keep as is */ }
   res.json({
     data: {
-      email: { configured: mailEnabled, from: env.EMAIL_FROM, ops_inbox: OPS_INBOX },
+      email: await emailStatus(),
       error_tracking: monitoringEnabled,
       malware_scanning: { configured: scanningEnabled, reachable: scanningEnabled ? await clamdPing() : false },
       encryption_key: secretsConfigured,
@@ -185,9 +186,12 @@ adminRouter.get('/system', asyncHandler(async (_req, res) => {
 }));
 
 adminRouter.post('/system/test-email', asyncHandler(async (req, res) => {
-  await sendTestEmail(req.platform.email);
-  res.json({ data: { sent_to: req.platform.email } });
+  const via = await sendTestEmail(req.platform.email);
+  res.json({ data: { sent_to: req.platform.email, via } });
 }));
+
+// Connecting the Google mailbox the app sends from.
+adminRouter.use(googleMailAdminRouter);
 
 // Funding applications (apply.os-funding.com) and their requirements.
 adminRouter.use(applicationsAdminRouter);

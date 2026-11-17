@@ -66,7 +66,26 @@ else
 fi
 
 echo; echo "4. Email"
-set_ SMTP_HOST && ok "sending through ${SMTP_HOST}:${SMTP_PORT:-587} as ${EMAIL_FROM:-?}" || no "SMTP_HOST not set — no invites, resets or alerts" "DEPLOY.md → Email"
+GOOGLE=false; set_ GOOGLE_OAUTH_CLIENT_ID && set_ GOOGLE_OAUTH_CLIENT_SECRET && GOOGLE=true
+USES_GOOGLE=$GOOGLE; [[ "${SMTP_HOST:-}" == *gmail* || "${SMTP_HOST:-}" == *google* ]] && USES_GOOGLE=true
+if $GOOGLE; then
+  gconn="$(psql_q "SELECT email || ' ' || status FROM mail_connections")"
+  if [ -z "$gconn" ]; then
+    no "Google is set up, but no mailbox is connected — nothing is sent through it" "console → System → Connect Google mailbox"
+  else
+    read -r gmail gstatus <<< "$gconn"
+    [ "$gstatus" = ok ] && ok "sending through Google as $gmail (From: ${EMAIL_FROM:-?})" \
+      || no "Google cancelled the permission to send from $gmail" "console → System → Reconnect"
+  fi
+  if timeout 6 bash -c "</dev/tcp/gmail.googleapis.com/443" 2>/dev/null; then ok "the server can reach the Gmail API"
+  else no "the server can't reach gmail.googleapis.com on port 443"; fi
+elif set_ SMTP_HOST; then
+  ok "sending through ${SMTP_HOST}:${SMTP_PORT:-587} as ${EMAIL_FROM:-?}"
+  if timeout 6 bash -c "</dev/tcp/${SMTP_HOST}/${SMTP_PORT:-587}" 2>/dev/null; then ok "the server can reach ${SMTP_HOST} on port ${SMTP_PORT:-587}"
+  else no "the server can't reach ${SMTP_HOST} on port ${SMTP_PORT:-587} — outgoing mail port blocked?" "DEPLOY.md → Email (send through Google over HTTPS instead)"; fi
+else
+  no "email isn't set up — no invites, resets or alerts" "DEPLOY.md → Email"
+fi
 [[ "${SMTP_HOST:-}" == *office365* || "${SMTP_HOST:-}" == *outlook* ]] && warn "Microsoft 365 password sending is being switched off" "use a sending service instead (DEPLOY.md → Email)"
 set_ OPS_NOTIFICATION_EMAIL && ok "alerts go to ${OPS_NOTIFICATION_EMAIL}" || no "OPS_NOTIFICATION_EMAIL not set — funding requests won't email you"
 if command -v dig >/dev/null; then
@@ -74,9 +93,9 @@ if command -v dig >/dev/null; then
   n="$(printf '%s\n' "$spf" | grep -c . || true)"
   if [ "$n" = "0" ]; then no "no SPF record on $DOMAIN_MAIL" "DEPLOY.md → Email"
   elif [ "$n" -gt 1 ]; then no "$n SPF records on $DOMAIN_MAIL — there must be exactly one" "merge them into one v=spf1 record"
-  elif [[ "${SMTP_HOST:-}" == *gmail* || "${SMTP_HOST:-}" == *google* ]] && [[ "$spf" != *_spf.google.com* ]]; then no "SPF doesn't include Google" "add include:_spf.google.com to: $spf"
+  elif $USES_GOOGLE && [[ "$spf" != *_spf.google.com* ]]; then no "SPF doesn't include Google" "edit it to: ${spf/v=spf1/v=spf1 include:_spf.google.com}"
   else ok "SPF: $spf"; fi
-  if [[ "${SMTP_HOST:-}" == *gmail* || "${SMTP_HOST:-}" == *google* ]]; then
+  if $USES_GOOGLE; then
     [ -n "$(dig +short TXT "google._domainkey.$DOMAIN_MAIL")" ] && ok "DKIM (google._domainkey) published" || no "no Google DKIM record" "Google Admin → Gmail → Authenticate email"
   else
     warn "DKIM: check your sending service's dashboard shows the domain as verified"
