@@ -230,8 +230,9 @@ operator routes answer 404 there.
 
 ### Launch checklist
 
-Do these once, before real customers. The console's **System** tab shows most of
-them at a glance.
+Do these once, before real customers. `sudo ./infra/launch-check.sh` shows
+where each one stands and what to do next (it changes nothing); the console's
+**System** tab shows most of them too.
 
 1. **Secrets in your password manager** — a copy of `.env.production` and the
    two files in `secrets/`. Above all `APPLICATION_DATA_KEY` and
@@ -239,14 +240,53 @@ them at a glance.
 2. **File storage off the server** — see "File storage" below.
 3. **Off-site, encrypted backups, tested** — see "Backups" below, including
    `./infra/restore.sh verify`.
-4. **Email** — `SMTP_*` and `OPS_NOTIFICATION_EMAIL` set; SPF, DKIM and DMARC
-   records added; System → *Send me a test* arrives in the inbox (not spam).
+4. **Email** — see "Email" below: `SMTP_*` and `OPS_NOTIFICATION_EMAIL` set;
+   SPF, DKIM and DMARC records added; System → *Send me a test* arrives in the
+   inbox (not spam).
 5. **Two-step sign-in for every operator** — happens at each operator's first
    sign-in; save the recovery codes it shows.
 6. **Monitoring** — an uptime check, error tracking, and the backup ping (see
    "Monitoring").
 7. **Server hardening** — `sudo ./infra/harden.sh`, then `--apply`.
 8. **Malware scanning** — optional on 4 GB, comfortable on 8 GB (see below).
+
+### Email
+
+**Google Workspace** (mail for os-funding.com is at Google):
+
+1. Pick the mailbox the app sends as. It needs 2-Step Verification on. At
+   https://myaccount.google.com/apppasswords create an app password named
+   "One Source app" — 16 letters, shown once.
+2. `.env.production`:
+   ```
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=587
+   SMTP_USER=<that mailbox>
+   SMTP_PASS=<the app password, no spaces>
+   EMAIL_FROM=<that mailbox, or an alias set up under Gmail → Settings → Accounts → Send mail as>
+   OPS_NOTIFICATION_EMAIL=<where funding alerts should land>
+   ```
+   Google allows about 2,000 messages a day per mailbox: plenty here.
+3. DNS (at whoever hosts os-funding.com's DNS):
+   - **SPF** — one TXT record on `os-funding.com` starting `v=spf1`. If one
+     exists, make sure it contains `include:_spf.google.com`; never add a
+     second `v=spf1` record. If none: `v=spf1 include:_spf.google.com ~all`.
+   - **DKIM** — Google Admin → Apps → Google Workspace → Gmail → *Authenticate
+     email* → *Generate new record* (2048-bit). Add the TXT record it shows
+     (`google._domainkey`), wait an hour, then press *Start authentication*.
+   - **DMARC** — TXT on `_dmarc.os-funding.com`:
+     `v=DMARC1; p=none; rua=mailto:<your address>`. After two clean weeks of
+     reports, change `p=none` to `p=quarantine`.
+4. `./infra/deploy.sh`, then console → System → *Send me a test*. In Gmail,
+   ⋮ → *Show original* should say PASS for SPF, DKIM and DMARC.
+
+**Microsoft 365:** password-based sending from a Microsoft 365 mailbox is
+switched off by default for existing tenants from the end of December 2026,
+and Microsoft will remove it entirely later. Don't build on it. Send the app's
+mail through a dedicated service instead (Resend, Postmark or Amazon SES — each
+gives you SMTP settings and DNS records to add), and keep Microsoft for your
+normal mail. Their SPF include goes into the *same* `v=spf1` record as
+Microsoft's `include:spf.protection.outlook.com`.
 
 ### File storage
 
