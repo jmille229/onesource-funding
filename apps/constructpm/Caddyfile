@@ -79,6 +79,11 @@
 		reverse_proxy api:3001
 	}
 
+	# Crash reports from the application pages (no login, rate limited).
+	handle /api/telemetry/* {
+		reverse_proxy api:3001
+	}
+
 	handle /api/* {
 		respond "Not found" 404
 	}

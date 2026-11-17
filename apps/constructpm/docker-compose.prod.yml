@@ -102,10 +102,14 @@ services:
     logging: *default-logging
     networks: [constructpm]
 
-  # ─── MinIO (S3-compatible storage for uploaded files) ───────────────────────
-  # Private to the Docker network. Downloads stream through the API rather than
-  # via presigned URLs, so the browser never needs to reach MinIO directly.
+  # ─── MinIO (S3-compatible storage for uploaded files) — legacy, optional ────
+  # Only runs with the `minio` profile (deploy.sh turns it on while S3_ENDPOINT
+  # still points here). Production files belong in managed storage (S3, R2,
+  # B2, Spaces) — encrypted, versioned, and not lost with this server; and the
+  # MinIO image can no longer be pulled, so a fresh server couldn't start it.
+  # Move with infra/migrate-files.sh (DEPLOY.md, "File storage").
   minio:
+    profiles: ["minio"]
     # Pinned. `latest` meant every `deploy.sh` could silently pull a new MinIO
     # major with a changed on-disk format or removed flag — the one component in
     # this stack whose upgrade is not a restart. Bump deliberately, after reading
@@ -131,6 +135,7 @@ services:
     networks: [constructpm]
 
   createbuckets:
+    profiles: ["minio"]
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     depends_on:
       minio:
@@ -157,8 +162,10 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      # Waited for only when the legacy `minio` profile is on.
       minio:
         condition: service_healthy
+        required: false
     environment:
       NODE_ENV: production
       PORT: 3001
@@ -178,12 +185,14 @@ services:
       JWT_PUBLIC_KEY_FILE: /run/secrets/jwt_public.pem
       JWT_ISSUER: ${JWT_ISSUER:-constructpm}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-constructpm-app}
-      S3_ENDPOINT: http://minio:9000
-      S3_REGION: us-east-1
+      # Managed storage (recommended) — or the legacy in-stack MinIO by default.
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_REGION: ${S3_REGION:-us-east-1}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET_FILES: ${S3_BUCKET_FILES:-constructpm-files}
-      S3_FORCE_PATH_STYLE: "true"
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      S3_SERVER_SIDE_ENCRYPTION: ${S3_SERVER_SIDE_ENCRYPTION:-AES256}
       # S3_PUBLIC_ENDPOINT intentionally unset — see files.router.ts.
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -204,12 +213,37 @@ services:
       # numbers can't be read.
       APPLICATION_DATA_KEY: ${APPLICATION_DATA_KEY:-}
       SKIP_VIRUS_SCAN: ${SKIP_VIRUS_SCAN:-true}
+      # Malware scanning: set CLAMAV_HOST=clamav and run the `clamav` profile.
+      CLAMAV_HOST: ${CLAMAV_HOST:-}
+      # Error tracking (Sentry or compatible). Blank: off.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      APP_RELEASE: ${IMAGE_TAG:-latest}
+      BUSINESS_TZ: ${BUSINESS_TZ:-America/New_York}
     volumes:
       - ./secrets/jwt_private.pem:/run/secrets/jwt_private.pem:ro
       - ./secrets/jwt_public.pem:/run/secrets/jwt_public.pem:ro
     deploy:
       resources:
         limits: { cpus: '1', memory: 512M }
+    logging: *default-logging
+    networks: [constructpm]
+
+  # ─── ClamAV (malware scanning of uploads) — optional ─────────────────────────
+  # Runs with the `clamav` profile (deploy.sh turns it on when CLAMAV_HOST is
+  # set). Needs ~1.5 GB of memory for its signature database: use a server
+  # with 4 GB at the least, 8 GB to be comfortable. Signatures update
+  # themselves (freshclam) and are kept in a volume across restarts.
+  clamav:
+    profiles: ["clamav"]
+    image: clamav/clamav:1.4
+    restart: always
+    volumes:
+      - ./infra/clamd.conf:/etc/clamav/clamd.conf:ro
+      - clamav_db:/var/lib/clamav
+    deploy:
+      resources:
+        limits: { memory: 2G }
     logging: *default-logging
     networks: [constructpm]
 
@@ -252,5 +286,6 @@ volumes:
   pg_data:
   redis_data:
   minio_data:
+  clamav_db:
   caddy_data:
   caddy_config:

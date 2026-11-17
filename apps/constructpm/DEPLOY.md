@@ -1,9 +1,10 @@
 # Deploying ConstructPM — Turnkey single VPS
 
 This is the push-button path: one Ubuntu VPS, one `docker compose` command, and
-Caddy provisions HTTPS for you. The whole stack — Postgres, Redis, MinIO (S3),
-the API, the web bundle, and the reverse proxy — runs from
-`docker-compose.prod.yml`. No managed cloud services required.
+Caddy provisions HTTPS for you. Postgres, Redis, the API, the web bundle and the
+reverse proxy run from `docker-compose.prod.yml`. Uploaded files go to a managed
+storage bucket and backups to another, both encrypted (see "File storage" and
+"Backups"). Before real customers: work through the **Launch checklist** below.
 
 Target: **https://app.os-funding.com** (swap in your own domain anywhere you see it).
 
@@ -90,8 +91,9 @@ for the API to report healthy. First boot:
 
 1. **Postgres** starts.
 2. **migrate** applies every migration and provisions the `constructpm_app` role.
-3. **Redis** comes up password-protected; **MinIO** starts and `createbuckets`
-   creates the files bucket.
+3. **Redis** comes up password-protected. (Uploaded files go to your storage
+   bucket — see "File storage". With `S3_ENDPOINT` unset, the legacy in-stack
+   MinIO starts instead.)
 4. **API** starts — only after migrations succeeded.
 5. **Caddy** requests a Let's Encrypt certificate and serves HTTPS.
 
@@ -142,11 +144,19 @@ skipping anything already recorded in `schema_migrations`, and the API refuses t
 start until it succeeds. Adding a migration means dropping a new
 `V00X__name.sql` in that folder — nothing else to wire up.
 
-**Roll back** to any previous build by pinning its commit SHA:
+`deploy.sh` runs the exact build CI made for the commit you pulled (it stops
+and says so if CI hasn't finished publishing it), backs the database up before
+any migration, and records each deploy in `deploys.log`.
+
+**Roll back** to the build that was running before:
 
 ```bash
-IMAGE_TAG=a1b2c3d ./infra/deploy.sh
+./infra/deploy.sh --rollback
 ```
+
+That changes the code, not the database (migrations only go forward). If a
+migration itself has to be undone, restore the backup `deploy.sh` took first:
+`./infra/restore.sh db backups/db-<stamp>.sql.gz.enc`.
 
 ### Turning on the factoring console
 
@@ -189,8 +199,9 @@ client in one step. It needs the factoring console (above) and three things:
 1. **DNS.** Add an `A` record for `apply` pointing at the VPS (the same IP as
    `app`). Caddy fetches the certificate by itself once the record resolves.
 
-2. **The encryption key** for applicants' EIN and Social Security numbers.
-   Generate it once and add it to `.env.production`:
+2. **The encryption key** for applicants' EINs and everyone's two-step sign-in
+   secrets (the console requires it). Generate it once and add it to
+   `.env.production`:
 
 ```bash
 echo "APPLICATION_DATA_KEY=$(openssl rand -base64 32)" >> .env.production
@@ -217,18 +228,133 @@ send yourself.
 On the apply host only `/api/apply/*` reaches the API — login, client and
 operator routes answer 404 there.
 
+### Launch checklist
+
+Do these once, before real customers. The console's **System** tab shows most of
+them at a glance.
+
+1. **Secrets in your password manager** — a copy of `.env.production` and the
+   two files in `secrets/`. Above all `APPLICATION_DATA_KEY` and
+   `BACKUP_PASSPHRASE`: lose those and encrypted data can't be read.
+2. **File storage off the server** — see "File storage" below.
+3. **Off-site, encrypted backups, tested** — see "Backups" below, including
+   `./infra/restore.sh verify`.
+4. **Email** — `SMTP_*` and `OPS_NOTIFICATION_EMAIL` set; SPF, DKIM and DMARC
+   records added; System → *Send me a test* arrives in the inbox (not spam).
+5. **Two-step sign-in for every operator** — happens at each operator's first
+   sign-in; save the recovery codes it shows.
+6. **Monitoring** — an uptime check, error tracking, and the backup ping (see
+   "Monitoring").
+7. **Server hardening** — `sudo ./infra/harden.sh`, then `--apply`.
+8. **Malware scanning** — optional on 4 GB, comfortable on 8 GB (see below).
+
+### File storage
+
+Uploaded documents belong in managed object storage: encrypted, versioned, and
+not lost with the server. (The old in-stack MinIO can't be re-installed — its
+image is no longer published — so a replacement server couldn't start it.)
+
+1. Create a **private** bucket — Cloudflare R2, AWS S3, Backblaze B2 or
+   DigitalOcean Spaces — with versioning on if offered, and an access key
+   limited to that bucket.
+2. Add the new bucket to `.env.production` as `NEW_S3_ENDPOINT`,
+   `NEW_S3_REGION`, `NEW_S3_BUCKET_FILES`, `NEW_S3_ACCESS_KEY`,
+   `NEW_S3_SECRET_KEY` (keep the current `S3_*` for now).
+3. Copy and check:
+   ```bash
+   ./infra/migrate-files.sh          # copies (safe to re-run)
+   ./infra/migrate-files.sh --check  # every file present?
+   ```
+4. Switch: set `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET_FILES`, `S3_ACCESS_KEY`,
+   `S3_SECRET_KEY` to the new bucket (examples in `.env.production.example`;
+   R2 and Spaces also need `S3_SERVER_SIDE_ENCRYPTION=none`), run
+   `./infra/migrate-files.sh` once more, then `./infra/deploy.sh`. MinIO stops
+   on its own once nothing points at it. Its data stays in the
+   `constructpm_minio_data` volume until you delete it — wait a few weeks.
+
 ### Backups
 
+`infra/backup.sh` dumps the database, archives `.env.production` and
+`secrets/`, and copies uploaded files — all encrypted with `BACKUP_PASSPHRASE` —
+keeps 14 days on the server and copies everything to an off-site bucket (35 days).
+
+1. In `.env.production`: `BACKUP_PASSPHRASE` (`openssl rand -base64 32`, saved in
+   your password manager), and `BACKUP_S3_*` for a bucket at a **different**
+   provider or account than the files (e.g. Backblaze B2), so one leaked key
+   can't delete both.
+2. Free monitoring: create a check at https://healthchecks.io (daily, 1-hour
+   grace), put its URL in `BACKUP_HEALTHCHECK_URL`. You get an email if a backup
+   fails, doesn't run, or the disk passes 85%.
+3. Run it once, then schedule it:
+   ```bash
+   ./infra/backup.sh
+   sudo crontab -e
+   # nightly at 3:15am:
+   15 3 * * * cd /root/onesource-funding/apps/constructpm && ./infra/backup.sh >> /var/log/constructpm-backup.log 2>&1
+   ```
+4. **Test a restore** — now, and monthly:
+   ```bash
+   ./infra/restore.sh verify    # loads the newest backup into a scratch database, counts, drops it
+   ```
+
+Restoring for real (`./infra/restore.sh` with no arguments lists the options):
+
 ```bash
-chmod +x infra/backup.sh
-sudo crontab -e
-# nightly at 3am:
-0 3 * * * /root/onesource-funding/apps/constructpm/infra/backup.sh >> /var/log/constructpm-backup.log 2>&1
+./infra/restore.sh list                                   # what's here and off-site
+./infra/restore.sh db backups/db-<stamp>.sql.gz.enc        # replace the database
+./infra/restore.sh files                                   # files from the off-site copy
 ```
 
-Dumps the database and mirrors uploaded files into `./backups`, pruning after 14
-days. That covers application mistakes but **not** losing the VPS itself — copy
-`./backups` off-box (S3, Backblaze, rsync elsewhere) for real durability.
+**A new server from scratch:** install Docker and clone the repo (steps 1–2),
+create `.env.production` with just `BACKUP_PASSPHRASE` and the `BACKUP_S3_*`
+lines, then `./infra/restore.sh list`, `fetch` the newest `secrets-…` file and
+`./infra/restore.sh secrets backups/secrets-….tar.gz.enc` to recover the real
+`.env.production` and `secrets/`. Move them into place, `./infra/deploy.sh`,
+then `./infra/restore.sh db …` and, if files lived on MinIO, `restore.sh files`.
+
+### Monitoring
+
+- **Uptime:** an external check (UptimeRobot, Better Stack, Healthchecks — all
+  have free tiers) on `https://app.os-funding.com/health/ready` and
+  `https://apply.os-funding.com/`, alerting you by email/SMS. `/health/ready`
+  answers 200 only when the database and Redis are reachable.
+- **Errors:** set `SENTRY_DSN` (a free Sentry project) and redeploy. Server
+  errors, crashes and browser crashes are reported; no client data is sent.
+- **Backups and disk:** the `BACKUP_HEALTHCHECK_URL` ping above.
+
+### Malware scanning
+
+Every upload is scanned with ClamAV and a flagged file can't be downloaded.
+ClamAV holds its signature database in memory (~1.5 GB), so use it on a server
+with at least 4 GB and preferably 8 GB:
+
+```bash
+# .env.production
+CLAMAV_HOST=clamav
+./infra/deploy.sh      # starts the clamav service; first signature download takes a few minutes
+```
+
+Check it in the console's System tab ("ClamAV answering"). To prove it blocks
+malware, upload the harmless EICAR test file (eicar.org) as an invoice document
+and try to download it — it should be refused.
+
+### Server hardening
+
+```bash
+sudo ./infra/harden.sh           # shows what it would change
+sudo ./infra/harden.sh --apply   # firewall (22/80/443), automatic security updates, fail2ban, key-only SSH
+```
+
+Key-only SSH is applied only when an SSH key is already installed, so it can't
+lock you out. Add yours first (`ssh-copy-id root@<server>` from your Mac) and
+check you can sign in with it.
+
+### Operators and two-step sign-in
+
+Every operator signs in with a password **and** a code from an authenticator
+app. The first sign-in shows a QR code to set it up, then ten recovery codes —
+save them. Lost phone and codes: `./infra/reset-operator-2fa.sh <email>` on the
+server, and they set it up again at the next sign-in.
 
 **Stop / start (keeps your data):**
 
@@ -252,18 +378,17 @@ run that unless you mean to wipe everything.
 | `postgres`     | Tenant data with Row-Level Security                     | no      |
 | `migrate`      | One-shot schema migration on each deploy, then exits    | no      |
 | `redis`        | Rate limiting, caching                                  | no      |
-| `minio`        | S3-compatible file storage                              | no      |
-| `createbuckets`| One-shot bucket creation, then exits                    | no      |
+| `minio`        | Legacy in-stack file storage (`minio` profile only)     | no      |
+| `createbuckets`| One-shot MinIO bucket creation (`minio` profile only)   | no      |
+| `clamav`       | Malware scanning of uploads (`clamav` profile only)     | no      |
 
 Only Caddy is reachable from the internet. The browser calls `/api/*` on your
 domain; Caddy routes those to the API and everything else to the SPA, so there's
 no CORS and no second hostname to manage.
 
-File downloads stream through the API rather than via presigned URLs, because
-MinIO is private to the Docker network and a presigned `http://minio:9000/...`
-URL resolves for the API container and for nobody else. If you later move to real
-S3 or expose MinIO on its own hostname, set `S3_PUBLIC_ENDPOINT` and the API
-switches back to presigned URLs automatically.
+File downloads stream through the API rather than via presigned URLs, so every
+download passes the malware check and the bucket stays entirely private. (Set
+`S3_PUBLIC_ENDPOINT` to switch to short-lived presigned URLs instead.)
 
 ### Security notes
 
