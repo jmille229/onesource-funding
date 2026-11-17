@@ -139,7 +139,7 @@ export function ApplicationsPanel() {
 // ─── One application ──────────────────────────────────────────────────────────
 
 interface Item {
-  id: string; requirement_key: string; kind: 'document' | 'ein' | 'ssn'; original_name: string | null;
+  id: string; requirement_key: string; kind: 'document' | 'ein'; original_name: string | null;
   size_bytes: string | null; source: 'applicant' | 'operator'; note: string | null; created_at: string;
   masked: string | null;
 }

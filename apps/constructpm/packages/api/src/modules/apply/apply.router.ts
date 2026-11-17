@@ -69,7 +69,7 @@ applyRouter.use((_req, res, next) => {
 
 interface Requirement {
   key: string; label: string; description: string | null;
-  kind: 'document' | 'ein' | 'ssn'; required: boolean; has_template: boolean;
+  kind: 'document' | 'ein'; required: boolean; has_template: boolean;
 }
 
 async function activeRequirements(c: pg.PoolClient | pg.Pool): Promise<Requirement[]> {
@@ -171,7 +171,7 @@ const APPLICANT_FIELDS = `id, status, contact_first_name, contact_last_name, con
   signature_name, signed_at, submitted_at, request_message, requested_items, created_at, updated_at`;
 
 interface ItemRow {
-  id: string; requirement_key: string; kind: 'document' | 'ein' | 'ssn';
+  id: string; requirement_key: string; kind: 'document' | 'ein';
   original_name: string | null; size_bytes: string | null; value_last4: string | null;
   source: string; note: string | null; created_at: string;
 }
@@ -270,20 +270,20 @@ applyRouter.patch('/me', validate(updateSchema), asyncHandler(async (req, res) =
   res.json({ data });
 }));
 
-// ─── Sensitive numbers (EIN, SSN) ─────────────────────────────────────────────
+// ─── Sensitive numbers (the business EIN) ─────────────────────────────────────────────
 
 applyRouter.put('/me/numbers/:key', validate(z.object({ value: z.string().max(20) })),
   asyncHandler(async (req, res) => {
     const digits = nineDigits((req.body as { value: string }).value);
     const data = await withApplication(req.applicationId!, async (c) => {
-      const r = await c.query<{ kind: 'document' | 'ein' | 'ssn' }>(
+      const r = await c.query<{ kind: 'document' | 'ein' }>(
         `SELECT kind FROM application_requirements WHERE key = $1 AND active`, [req.params['key']]);
       const kind = r.rows[0]?.kind;
-      if (kind !== 'ein' && kind !== 'ssn') {
+      if (kind !== 'ein') {
         throw Object.assign(new Error('Unknown item'), { status: 404 });
       }
       if (!digits) {
-        throw Object.assign(new Error(kind === 'ein' ? 'Enter the 9-digit EIN' : 'Enter the 9-digit Social Security number'), { status: 422 });
+        throw Object.assign(new Error('Enter the 9-digit EIN'), { status: 422 });
       }
       const problem = validateSecret(kind, digits);
       if (problem) throw Object.assign(new Error(problem), { status: 422 });

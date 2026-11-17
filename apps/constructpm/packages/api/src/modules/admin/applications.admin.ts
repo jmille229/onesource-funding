@@ -123,12 +123,12 @@ applicationsAdminRouter.get('/applications/:id/items/:itemId/download', asyncHan
   await deliverAttachment(res, r.rows[0]!);
 }));
 
-/** Show an EIN/SSN in full. Every reveal is written to the audit log (the value isn't). */
+/** Show an EIN in full. Every reveal is written to the audit log (the value isn't). */
 applicationsAdminRouter.post('/applications/:id/items/:itemId/reveal', asyncHandler(async (req, res) => {
   const value = await withAdminTransaction(async (c) => {
     const r = await c.query<{ kind: string; value_encrypted: string; requirement_key: string }>(
       `SELECT kind, value_encrypted, requirement_key FROM funding_application_items
-        WHERE id = $1 AND application_id = $2 AND kind IN ('ein','ssn') AND value_encrypted IS NOT NULL`,
+        WHERE id = $1 AND application_id = $2 AND kind = 'ein' AND value_encrypted IS NOT NULL`,
       [req.params['itemId'], req.params['id']]);
     const row = r.rows[0];
     if (!row) throw Object.assign(new Error('Not found'), { status: 404 });
@@ -380,7 +380,7 @@ applicationsAdminRouter.post('/application-requirements',
   validate(z.object({
     ...requirementFields,
     key: z.string().regex(/^[a-z0-9_]{2,40}$/, 'Lowercase letters, numbers and underscores'),
-    kind: z.enum(['document', 'ein', 'ssn']).default('document'),
+    kind: z.enum(['document', 'ein']).default('document'),
   })),
   asyncHandler(async (req, res) => {
     const b = req.body as Record<string, unknown>;

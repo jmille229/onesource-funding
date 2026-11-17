@@ -11,7 +11,7 @@ import { adminApi } from '../../lib/admin-api';
  */
 
 interface Req {
-  id: string; key: string; label: string; description: string | null; kind: 'document' | 'ein' | 'ssn';
+  id: string; key: string; label: string; description: string | null; kind: 'document' | 'ein';
   required: boolean; active: boolean; sort_order: number; template_name: string | null; has_template: boolean;
 }
 type ErrorLike = { response?: { data?: { message?: string; details?: Record<string, string[]> } } };
@@ -20,7 +20,7 @@ const errMsg = (e: unknown, fallback: string) => {
   const field = d?.details && Object.entries(d.details).find(([, v]) => v?.length);
   return field ? `${field[0]}: ${field[1][0]}` : d?.message ?? fallback;
 };
-const KIND_LABEL = { document: 'Document upload', ein: 'EIN (typed, encrypted)', ssn: 'SSN (typed, encrypted)' };
+const KIND_LABEL = { document: 'Document upload', ein: 'EIN (typed, encrypted)' };
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
 

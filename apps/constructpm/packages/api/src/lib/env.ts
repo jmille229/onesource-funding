@@ -100,7 +100,7 @@ const envSchema = z.object({
   JWT_ADMIN_AUDIENCE: z.string().default('constructpm-admin'),
 
   // ─── Funding applications (apply.os-funding.com) ───────────────────────────
-  // 32-byte key, base64, that encrypts EIN/SSN values before they are stored.
+  // 32-byte key, base64, that encrypts EIN values (and two-step sign-in secrets) before they are stored.
   // Generate: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
   // Unset: the public application is switched off (it returns 503), nothing
   // else is affected. Losing it makes stored numbers unreadable, so back it up.

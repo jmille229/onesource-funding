@@ -475,7 +475,8 @@ export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
   withdrawn: 'Withdrawn',
 };
 
-export type ApplicationItemKind = 'document' | 'ein' | 'ssn';
+/** 'document' an upload; 'ein' the business tax ID, typed and stored encrypted. */
+export type ApplicationItemKind = 'document' | 'ein';
 
 /**
  * What the applicant agrees to by signing. Versioned: the version is stored

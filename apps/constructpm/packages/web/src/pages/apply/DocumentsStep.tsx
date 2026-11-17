@@ -12,7 +12,7 @@ const ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,application/pdf,image/jpe
 
 /**
  * One row per requirement One Source has set (the list is theirs to edit in
- * the operator console). Documents upload as files; EIN and SSN are typed,
+ * the operator console). Documents upload as files; the EIN is typed,
  * encrypted by the server on save, and only ever shown back masked.
  */
 export function DocumentsStep({ state, onChange, highlight }: {
@@ -149,19 +149,16 @@ function DocumentFiles({ requirement: r, items, onChange }: {
   );
 }
 
-/** Format as the user types: 12-3456789 for an EIN, 123-45-6789 for an SSN. */
-function formatNumber(kind: 'ein' | 'ssn', raw: string): string {
+/** Format an EIN as the user types: 12-3456789. */
+function formatNumber(_kind: 'ein', raw: string): string {
   const d = raw.replace(/\D/g, '').slice(0, 9);
-  if (kind === 'ein') return d.length > 2 ? `${d.slice(0, 2)}-${d.slice(2)}` : d;
-  if (d.length > 5) return `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
-  if (d.length > 3) return `${d.slice(0, 3)}-${d.slice(3)}`;
-  return d;
+  return d.length > 2 ? `${d.slice(0, 2)}-${d.slice(2)}` : d;
 }
 
 function SecureNumber({ requirement: r, item, onChange }: {
   requirement: Requirement; item: ApplicationItem | undefined; onChange: (s: ApplicationState) => void;
 }) {
-  const kind = r.kind as 'ein' | 'ssn';
+  const kind = r.kind as 'ein';
   const [editing, setEditing] = useState(!item);
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
@@ -200,7 +197,7 @@ function SecureNumber({ requirement: r, item, onChange }: {
       <label htmlFor={id} className="sr-only">{r.label}</label>
       <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
         <input id={id} className="input font-mono sm:w-48" inputMode="numeric" autoComplete="off" spellCheck={false}
-               placeholder={kind === 'ein' ? '12-3456789' : '123-45-6789'}
+               placeholder="12-3456789"
                value={value} onChange={(e) => setValue(formatNumber(kind, e.target.value))}
                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (value.replace(/\D/g, '').length === 9) void save(); } }}
                aria-invalid={Boolean(error)} aria-describedby={`${id}_hint`} />

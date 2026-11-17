@@ -38,11 +38,11 @@ export function resumeLinkFor(token: string): string {
 
 export interface Requirement {
   key: string; label: string; description: string | null;
-  kind: 'document' | 'ein' | 'ssn'; required: boolean; has_template: boolean;
+  kind: 'document' | 'ein'; required: boolean; has_template: boolean;
 }
 
 export interface ApplicationItem {
-  id: string; requirement_key: string; kind: 'document' | 'ein' | 'ssn';
+  id: string; requirement_key: string; kind: 'document' | 'ein';
   source: 'applicant' | 'operator'; note: string | null; created_at: string;
   original_name?: string | null; size_bytes?: number | null; masked?: string;
 }
