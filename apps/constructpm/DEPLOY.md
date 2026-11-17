@@ -240,9 +240,9 @@ where each one stands and what to do next (it changes nothing); the console's
 2. **File storage off the server** — see "File storage" below.
 3. **Off-site, encrypted backups, tested** — see "Backups" below, including
    `./infra/restore.sh verify`.
-4. **Email** — see "Email" below: `SMTP_*` and `OPS_NOTIFICATION_EMAIL` set;
-   SPF, DKIM and DMARC records added; System → *Send me a test* arrives in the
-   inbox (not spam).
+4. **Email** — see "Email" below: a Google mailbox connected in the System tab
+   (or SMTP set), `OPS_NOTIFICATION_EMAIL` set, SPF, DKIM and DMARC records
+   added; System → *Send me a test* arrives in the inbox (not spam).
 5. **Two-step sign-in for every operator** — happens at each operator's first
    sign-in; save the recovery codes it shows.
 6. **Monitoring** — an uptime check, error tracking, and the backup ping (see
@@ -252,68 +252,82 @@ where each one stands and what to do next (it changes nothing); the console's
 
 ### Email
 
-**Google Workspace** (mail for os-funding.com is at Google):
+**Google Workspace (recommended when your mail is at Google).** The app sends
+through one of your mailboxes with the Gmail API. That's ordinary HTTPS, so it
+works even though DigitalOcean blocks mail ports, and the app gets permission
+to **send only**: it can't read the mailbox.
 
-1. Pick the mailbox the app sends as. It needs 2-Step Verification on. At
-   https://myaccount.google.com/apppasswords create an app password named
-   "One Source app" — 16 letters, shown once.
-2. `.env.production`:
-   ```
-   SMTP_HOST=smtp.gmail.com
-   SMTP_PORT=587
-   SMTP_USER=<that mailbox>
-   SMTP_PASS=<the app password, no spaces>
-   EMAIL_FROM=<that mailbox, or an alias set up under Gmail → Settings → Accounts → Send mail as>
-   OPS_NOTIFICATION_EMAIL=<where funding alerts should land>
-   ```
-   Google allows about 2,000 messages a day per mailbox: plenty here.
-3. DNS (at whoever hosts os-funding.com's DNS):
-   - **SPF** — one TXT record on `os-funding.com` starting `v=spf1`. If one
-     exists, make sure it contains `include:_spf.google.com`; never add a
-     second `v=spf1` record. If none: `v=spf1 include:_spf.google.com ~all`.
-   - **DKIM** — Google Admin → Apps → Google Workspace → Gmail → *Authenticate
-     email* → *Generate new record* (2048-bit). Add the TXT record it shows
-     (`google._domainkey`), wait an hour, then press *Start authentication*.
-   - **DMARC** — TXT on `_dmarc.os-funding.com`:
-     `v=DMARC1; p=none; rua=mailto:<your address>`. After two clean weeks of
-     reports, change `p=none` to `p=quarantine`.
-4. `./infra/deploy.sh`, then console → System → *Send me a test*. In Gmail,
-   ⋮ → *Show original* should say PASS for SPF, DKIM and DMARC.
+*A. Google Cloud, once (about 10 minutes, signed in as your Workspace admin):*
 
-**If the mail port is blocked.** DigitalOcean blocks outgoing mail ports 25,
-465 and 587 on many Droplets, Gmail included. The test then says "No answer
-from smtp.gmail.com on port 587". Check from the server:
+1. https://console.cloud.google.com → the project picker at the top → **New
+   project**. Name it "One Source app", with Organization `os-funding.com` →
+   **Create**, then make sure it's the selected project.
+2. ☰ → **APIs & Services → Library** → search **Gmail API** → **Enable**.
+3. ☰ → **Google Auth Platform** (older screens call it *OAuth consent screen*)
+   → **Get started**: app name "One Source", your address as support email,
+   Audience **Internal**, your address as contact → **Create**. Internal means
+   only os-funding.com accounts can use it, and Google doesn't need to review it.
+4. **Clients → Create client**: type **Web application**, name "One Source
+   app", and under **Authorized redirect URIs** add exactly
+   `https://app.os-funding.com/api/mail/google/callback` → **Create**.
+5. Copy the **Client ID** and **Client secret** into your password manager
+   straight away; Google may not show the secret again.
+
+*B. The server:*
 
 ```bash
-timeout 5 bash -c '</dev/tcp/smtp.gmail.com/587' && echo open || echo blocked
+sed -i -E '/^(GOOGLE_OAUTH_CLIENT_ID|GOOGLE_OAUTH_CLIENT_SECRET|SMTP_HOST|SMTP_PASS)=/d' .env.production
+read -rp  "Google client ID: " ID;     echo "GOOGLE_OAUTH_CLIENT_ID=$ID" >> .env.production
+read -rsp "Google client secret: " S; echo; echo "GOOGLE_OAUTH_CLIENT_SECRET=$S" >> .env.production; unset ID S
+./infra/deploy.sh
 ```
 
-Either ask DigitalOcean support to lift the block (a support ticket; they may
-want an account older than 60 days, and may say no), or, quicker, send the
-app's mail through a service that also listens on port **2587**. Your own
-mailbox stays on Google either way. With Resend (free tier):
+*C. The console:* **System → Connect Google mailbox**. A Google window opens:
+sign in as the mailbox the app should send from and press **Allow**. The
+System tab shows "Sending … through Google" within a few seconds. Then **Send
+me a test**.
 
-1. resend.com → *Domains* → add `os-funding.com` and add the DNS records it
-   shows. They live on `resend._domainkey` and `send.os-funding.com`, so they
-   don't touch your Google mail or your main SPF record. Press *Verify*.
-2. *API Keys* → create one with sending access → password manager.
-3. `.env.production` (replace the Google lines):
-   ```
-   SMTP_HOST=smtp.resend.com
-   SMTP_PORT=2587
-   SMTP_USER=resend
-   SMTP_PASS=<the API key>
-   EMAIL_FROM=noreply@os-funding.com
-   ```
-4. `./infra/deploy.sh`, then System → *Send me a test*.
+*D. The From address.* `EMAIL_FROM` (e.g. `"One Source Funding
+<noreply@os-funding.com>"`) must be the connected mailbox or one of its **Send
+mail as** addresses; otherwise Gmail sends from the mailbox's own address. To
+add `noreply@`: Google Admin → **Directory → Users →** the mailbox → **Alternate
+email addresses** → add `noreply`; then in that mailbox's Gmail → ⚙ → **See all
+settings → Accounts → Send mail as → Add another email address** (leave "Treat
+as an alias" ticked).
 
-**Microsoft 365:** password-based sending from a Microsoft 365 mailbox is
-switched off by default for existing tenants from the end of December 2026,
-and Microsoft will remove it entirely later. Don't build on it. Send the app's
-mail through a dedicated service instead (Resend, Postmark or Amazon SES — each
-gives you SMTP settings and DNS records to add), and keep Microsoft for your
-normal mail. Their SPF include goes into the *same* `v=spf1` record as
-Microsoft's `include:spf.protection.outlook.com`.
+*E. DNS*, so mail isn't marked as spam:
+- **SPF**: one TXT record on `os-funding.com` starting `v=spf1`. It must contain
+  `include:_spf.google.com`; edit the existing record, never add a second one.
+  `sudo ./infra/launch-check.sh` prints the exact corrected value.
+- **DKIM**: Google Admin → **Apps → Google Workspace → Gmail → Authenticate
+  email** → **Generate new record** (2048-bit). Add the TXT record it shows
+  (`google._domainkey`), wait an hour, press **Start authentication**.
+- **DMARC**: TXT on `_dmarc.os-funding.com`: `v=DMARC1; p=none; rua=mailto:<you>`.
+  After two clean weeks of reports, change `p=none` to `p=quarantine`.
+
+Check: open the test email in Gmail → ⋮ → **Show original**: SPF, DKIM and
+DMARC should all say PASS.
+
+*If something goes wrong:*
+- **"Access blocked" / "admin hasn't approved" on Google's screen**: Google Admin
+  → **Security → Access and data control → API controls → Settings** → tick
+  **Trust internal, domain-owned apps** → Save, then connect again.
+- **The System tab says Google cancelled the permission**: Google does this when
+  that account's password changes or its access is removed. Press **Reconnect**.
+  Email stops until you do, and the console shows a banner.
+- **"The Gmail API isn't turned on"**: step A2.
+- **"redirect address isn't on the Google OAuth client"**: the URI in step A4
+  must match exactly, including `https://` and no trailing slash.
+
+**Other providers (SMTP).** Used only while no Google mailbox is connected:
+`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` and `EMAIL_FROM` in
+`.env.production` (Postmark, SendGrid, Amazon SES and others). DigitalOcean
+blocks ports 25, 465 and 587 on many servers: check with
+`timeout 5 bash -c '</dev/tcp/<smtp host>/587' && echo open || echo blocked`,
+and if it's blocked use the provider's alternative port 2587 or 2525 (e.g.
+Resend: `SMTP_HOST=smtp.resend.com`, `SMTP_PORT=2587`, `SMTP_USER=resend`,
+`SMTP_PASS=<API key>`). Microsoft 365's password-based sending is being
+switched off by default from the end of December 2026, so don't build on it.
 
 ### File storage
 

@@ -84,6 +84,10 @@ const envSchema = z.object({
   // Needs its own setting: EMAIL_FROM is a noreply address and SMTP_USER is an
   // auth username — for SES that's an AKIA-style key, not a mailbox at all.
   OPS_NOTIFICATION_EMAIL: z.string().email().optional(),
+  // Sending through a Google Workspace mailbox (Gmail API over HTTPS). The
+  // company's own OAuth client, "Internal"; see DEPLOY.md → Email.
+  GOOGLE_OAUTH_CLIENT_ID: z.string().optional().or(z.literal('').transform(() => undefined)),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional().or(z.literal('').transform(() => undefined)),
 
   // URLs
   APP_URL: z.string().default('http://localhost:5173'),

@@ -17,7 +17,7 @@ const webAdmin = join(here, '../../../../web/src/pages/admin');
 /** Route paths declared on the admin routers, e.g. "POST /invoices/:id/close". */
 function apiRoutes(): { method: string; pattern: RegExp; path: string }[] {
   const out: { method: string; pattern: RegExp; path: string }[] = [];
-  for (const f of ['admin.router.ts', 'applications.admin.ts', 'clients.admin.ts']) {
+  for (const f of ['admin.router.ts', 'applications.admin.ts', 'clients.admin.ts', 'google-mail.ts']) {
     const src = readFileSync(join(here, f), 'utf8');
     // router.get('/x', …) on one line, or router.post(\n  '/x', …) over two.
     for (const m of src.matchAll(/\b\w+Router\.(get|post|patch|put|delete)\(\s*'([^']+)'/g)) {

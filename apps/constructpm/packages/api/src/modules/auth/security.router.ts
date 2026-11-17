@@ -4,7 +4,7 @@ import argon2 from 'argon2';
 import { createHash, randomBytes } from 'crypto';
 import { readPool, writePool, createRlsClient } from '../../lib/db.js';
 import { env } from '../../lib/env.js';
-import { notify, mailEnabled } from '../../lib/mailer.js';
+import { notify, mailReady } from '../../lib/mailer.js';
 import { decryptSecret, encryptSecret, secretsConfigured } from '../../lib/secrets.js';
 import { verifyMfaChallenge } from '../../lib/jwt.js';
 import {
@@ -61,7 +61,7 @@ securityRouter.post('/password/forgot', authRateLimit,
         `SELECT * FROM auth_request_password_reset($1, $2)`, [email, hash(token)]);
       const u = r.rows[0];
       if (!u) return;
-      if (!mailEnabled) logger.warn('password reset requested but email is not configured — link not sent');
+      if (!(await mailReady())) logger.warn('password reset requested but email is not working — link may not arrive');
       await notify({
         to: u.email,
         subject: 'Reset your One Source password',
@@ -103,7 +103,7 @@ securityRouter.post('/email/verify', refreshRateLimit,
 
 securityRouter.post('/email/verify/resend', authenticate, asyncHandler(async (req, res) => {
   if (!(await consumeEmailSend(`verify:${req.auth.userId}`))) throw fail(429, 'Too many emails sent. Try again later.');
-  if (!mailEnabled) throw fail(503, 'Email isn’t set up on this server yet.');
+  if (!(await mailReady())) throw fail(503, 'Email isn’t set up on this server yet.');
   await sendVerificationEmail(req.auth.userId);
   res.json({ data: { sent: true } });
 }));

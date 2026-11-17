@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { env } from './lib/env.js';
 import { reportError, flushReports } from './lib/monitoring.js';
-import { mailEnabled, opsNotificationsEnabled } from './lib/mailer.js';
+import { mailReady, mailMode, OPS_INBOX } from './lib/mailer.js';
 import { connectRedis } from './lib/redis.js';
 import { writePool } from './lib/db.js';
 import {
@@ -39,6 +39,7 @@ import { reportsRouter }       from './modules/reports/reports.router.js';
 import { settingsRouter }      from './modules/settings/settings.router.js';
 import { factoringRouter }     from './modules/factoring/factoring.router.js';
 import { adminRouter }         from './modules/admin/admin.router.js';
+import { mailOAuthRouter }     from './modules/admin/google-mail.js';
 import { adminEnabled }        from './lib/admin-db.js';
 
 const app = express();
@@ -109,6 +110,8 @@ app.use('/api/apply', applyRouter);
 // operate factoring exposes no cross-tenant surface at all.
 if (adminEnabled) {
   app.use('/api/admin', adminRouter);
+  // Google's redirect back after connecting the mailbox the app sends from.
+  app.use('/api/mail', mailOAuthRouter);
 } else {
   app.use('/api/admin', (_req, res) => {
     res.status(503).json({ error: 'not_configured', message: 'Factoring console is not enabled' });
@@ -173,11 +176,16 @@ async function start() {
 
   // Say so loudly when production can't send email: invites, password resets
   // and One Source's own alerts all depend on it.
-  if (env.NODE_ENV === 'production' && !mailEnabled) {
-    logger.warn('EMAIL IS NOT CONFIGURED (SMTP_HOST unset): invites, password resets and alerts are not being sent');
-  }
-  if (env.NODE_ENV === 'production' && !opsNotificationsEnabled) {
-    logger.warn('OPS_NOTIFICATION_EMAIL unset: One Source will not be emailed about funding requests or applications');
+  if (env.NODE_ENV === 'production') {
+    const [ready, mode] = await Promise.all([mailReady(), mailMode()]);
+    if (!ready) {
+      logger.warn({ mode }, mode === 'google'
+        ? 'EMAIL IS NOT WORKING: Google cancelled the permission to send. Reconnect it in the console’s System tab'
+        : 'EMAIL IS NOT CONFIGURED: invites, password resets and alerts are not being sent. Connect a Google mailbox in the console’s System tab, or set SMTP_HOST');
+    }
+    if (!OPS_INBOX) {
+      logger.warn('OPS_NOTIFICATION_EMAIL unset: One Source will not be emailed about funding requests or applications');
+    }
   }
 }
 

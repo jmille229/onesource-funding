@@ -200,6 +200,9 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       EMAIL_FROM: ${EMAIL_FROM:-noreply@os-funding.com}
+      # Sending through the Google Workspace mailbox connected in the console (Gmail API).
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       # Where funding-request and onboarding alerts are delivered. Distinct from
       # EMAIL_FROM, which is the noreply sender.
       OPS_NOTIFICATION_EMAIL: ${OPS_NOTIFICATION_EMAIL:-}
