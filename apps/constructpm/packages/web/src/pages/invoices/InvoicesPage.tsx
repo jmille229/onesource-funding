@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Plus, FileText, Search, Banknote, Paperclip, Lock, ArrowRight, X } from 'lucide-react';
@@ -8,8 +8,10 @@ import { useAuthStore } from '../../stores/auth.store';
 import {
   type InvoiceAction, invoiceStatusBadge, invoiceStatusLabel, isAwaitingAgency, nextAction,
   canEditInvoices, canRecordPayments, FUNDING_BADGE, FUNDING_LABEL, daysSince, isFundedOpen,
-  fundedBadge,
+  fundedBadge, useInvoiceSummary,
 } from '../../lib/invoices';
+
+const PAGE_SIZE = 100;
 import { useFundingAccount, ADVANCE_MAX, dismiss, dismissedRecently } from '../../lib/funding';
 import { LogInvoiceModal } from '../../components/invoices/LogInvoiceModal';
 import { useWorkspace } from '../../components/layout/AppLayout';
@@ -111,36 +113,34 @@ export function InvoicesPage() {
       && (!f || f === 'declined');
   };
 
-  const { data, isLoading } = useQuery<InvoiceRow[]>({
-    queryKey: ['invoices', statusFilter],
-    queryFn: () => api.get(`/invoices?status=${encodeURIComponent(statusFilter)}`).then((r) => r.data.data),
+  // Totals over every invoice, from the server — not just the page on screen.
+  const { data: summary } = useInvoiceSummary();
+
+  // One page of the list, filtered and searched on the server.
+  const [page, setPage] = useState(1);
+  const [q, setQ] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => { setQ(search.trim()); setPage(1); }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+  useEffect(() => { setPage(1); }, [statusFilter, view]);
+  const { data, isLoading } = useQuery<{ data: InvoiceRow[]; meta: { total: number; page: number; per_page: number } }>({
+    queryKey: ['invoices', 'list', { statusFilter, view, q, page }],
+    queryFn: () => api.get('/invoices', { params: {
+      status: statusFilter || undefined, funding: view === 'all' ? undefined : view, q: q || undefined, page, per_page: PAGE_SIZE,
+    } }).then((r) => r.data),
+    placeholderData: (prev) => prev,
   });
-
-  const invoices = data ?? [];
-  const q = search.trim().toLowerCase();
-  const filtered = invoices
-    .filter((i) => !q || [i.invoice_number, i.customer_name, i.job_name, i.agency_reference, i.contract_reference]
-      .some((v) => v?.toLowerCase().includes(q)))
-    .filter((i) => view === 'all'
-      || (view === 'funded' && Boolean(i.funded_id))
-      || (view === 'not_funded' && !i.funded_id)
-      || (view === 'eligible' && canRequestFunding(i)));
-
-  const outstanding = invoices
-    .filter((i) => !['draft', 'paid', 'void'].includes(i.status))
-    .reduce((s, i) => s + Number(i.balance_due ?? 0), 0);
-  const awaiting = invoices.filter((i) => isAwaitingAgency(i.status)).length;
-  const approvedUnpaid = invoices.filter((i) => i.status === 'approved').length;
-  const eligible = invoices.filter(canRequestFunding);
-  const fundedOpen = invoices.filter((i) => isFundedOpen(i.funded_status) && !['paid', 'void'].includes(i.status));
-  const fundedCount = invoices.filter((i) => i.funded_id).length;
-  // What a company that doesn't factor yet could turn into cash today.
-  const approvedWaiting = invoices.filter((i) => i.status === 'approved' && Number(i.balance_due) > 0 && !i.funded_id);
-  const approvedWaitingTotal = approvedWaiting.reduce((s, i) => s + Number(i.balance_due), 0);
+  const rows = data?.data ?? [];
+  const total = data?.meta.total ?? 0;
+  const anyInvoices = (summary?.total_count ?? 0) > 0;
+  const eligibleCount = summary?.eligible_count ?? 0;
 
   const canQuick = (a: InvoiceAction) => (a === 'payment' ? canRecordPayments(role) : canEditInvoices(role));
 
-  const showBanner = funding.isProspect && !bannerHidden && invoices.length > 0;
+  const showBanner = funding.isProspect && !bannerHidden && anyInvoices;
+  const approvedWaitingTotal = summary?.approved_unfunded_amount ?? 0;
+  const approvedWaitingCount = summary?.approved_unfunded_count ?? 0;
 
   return (
     <div className="page max-w-7xl mx-auto space-y-5">
@@ -174,7 +174,7 @@ export function InvoicesPage() {
                 <>
                   <p className="font-semibold text-slate-900">
                     {formatCurrency(approvedWaitingTotal)} is approved and waiting on the agency
-                    {approvedWaiting.length > 1 ? ` (${approvedWaiting.length} invoices)` : ''}.
+                    {approvedWaitingCount > 1 ? ` (${approvedWaitingCount} invoices)` : ''}.
                   </p>
                   <p className="text-sm text-slate-600 mt-0.5">
                     One Source can advance up to {formatCurrency(approvedWaitingTotal * ADVANCE_MAX)} of it now —
@@ -198,26 +198,26 @@ export function InvoicesPage() {
         </div>
       )}
 
-      {invoices.length > 0 && (
+      {anyInvoices && summary && (
         <div className={clsx('grid grid-cols-1 sm:grid-cols-2 gap-3', funding.isClient ? 'lg:grid-cols-4' : 'lg:grid-cols-3')}>
           <div className="card p-4">
             <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Outstanding</p>
-            <p className="text-xl font-bold tabular-nums mt-1">{formatCurrency(outstanding)}</p>
+            <p className="text-xl font-bold tabular-nums mt-1">{formatCurrency(summary.outstanding_amount)}</p>
             <p className="text-xs text-slate-500">Submitted and not yet paid</p>
           </div>
           <div className="card p-4">
             <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Waiting on approval</p>
-            <p className="text-xl font-bold tabular-nums mt-1">{awaiting}</p>
+            <p className="text-xl font-bold tabular-nums mt-1">{summary.awaiting_count}</p>
             <p className="text-xs text-slate-500">With the agency</p>
           </div>
           <div className="card p-4">
             <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Approved, awaiting payment</p>
-            <p className="text-xl font-bold tabular-nums mt-1">{approvedUnpaid}</p>
+            <p className="text-xl font-bold tabular-nums mt-1">{summary.approved_count}</p>
             <p className="text-xs text-slate-500">
               {funding.isActive ? (
-                eligible.length > 0
+                eligibleCount > 0
                   ? <button className="text-brand-600 hover:underline" onClick={() => setView('eligible')}>
-                      {eligible.length} eligible for funding
+                      {eligibleCount} eligible for funding
                     </button>
                   : 'None waiting to be funded'
               ) : 'Agency has approved'}
@@ -227,10 +227,10 @@ export function InvoicesPage() {
             <div className="card p-4">
               <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Funded, with the agency</p>
               <p className="text-xl font-bold tabular-nums mt-1">
-                {formatCurrency(fundedOpen.reduce((s, i) => s + Number(i.balance_due), 0))}
+                {formatCurrency(summary.funded_open_amount)}
               </p>
               <p className="text-xs text-slate-500">
-                {fundedOpen.length} invoice{fundedOpen.length === 1 ? '' : 's'} ·{' '}
+                {summary.funded_open_count} invoice{summary.funded_open_count === 1 ? '' : 's'} ·{' '}
                 <Link to="/funding" className="text-brand-600 hover:underline">Funding overview</Link>
               </p>
             </div>
@@ -254,9 +254,9 @@ export function InvoicesPage() {
           <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5 text-sm" role="group" aria-label="Funding">
             {([
               ['all', 'All'],
-              ['funded', `Funded${fundedCount ? ` (${fundedCount})` : ''}`],
+              ['funded', `Funded${summary?.funded_count ? ` (${summary.funded_count})` : ''}`],
               ['not_funded', 'Not funded'],
-              ...(funding.isActive ? [['eligible', `Eligible to fund${eligible.length ? ` (${eligible.length})` : ''}`]] : []),
+              ...(funding.isActive ? [['eligible', `Eligible to fund${eligibleCount ? ` (${eligibleCount})` : ''}`]] : []),
             ] as [FundingView, string][]).map(([v, label]) => (
               <button key={v} aria-pressed={view === v} onClick={() => setView(v)}
                       className={clsx('px-3 py-1.5 rounded whitespace-nowrap',
@@ -285,18 +285,18 @@ export function InvoicesPage() {
           <tbody className="divide-y divide-slate-100">
             {isLoading ? (
               <tr><td colSpan={6} className="table-cell text-center py-8 text-slate-400">Loading…</td></tr>
-            ) : filtered.length === 0 ? (
+            ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={6} className="py-12 text-center">
                   <FileText className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                  <p className="text-slate-600 font-medium">{invoices.length ? 'No invoices match' : 'No invoices yet'}</p>
-                  {!invoices.length && (
+                  <p className="text-slate-600 font-medium">{anyInvoices ? 'No invoices match' : 'No invoices yet'}</p>
+                  {!anyInvoices && (
                     <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
                       Bill the agency the way you normally do, then log the invoice here to track it
                       through approval and payment.
                     </p>
                   )}
-                  {!invoices.length && canEditInvoices(role) && (
+                  {!anyInvoices && canEditInvoices(role) && (
                     <button onClick={() => setShowNew(true)} className="btn-primary btn-sm mt-4">
                       <Plus className="w-4 h-4" /> Log your first invoice
                     </button>
@@ -304,7 +304,7 @@ export function InvoicesPage() {
                 </td>
               </tr>
             ) : (
-              filtered.map((inv) => {
+              rows.map((inv) => {
                 const next = nextAction(inv.status, inv.funded_status);
                 const request = !inv.funded_id ? fundingByInvoice[inv.id] : undefined;
                 const funded = funding.isClient ? fundedBadge(inv.funded_status) : null;
@@ -382,6 +382,18 @@ export function InvoicesPage() {
           </tbody>
         </table>
       </div>
+
+      {total > PAGE_SIZE && (
+        <div className="flex items-center justify-between gap-3 text-sm text-slate-600">
+          <span className="tabular-nums">
+            {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}
+          </span>
+          <div className="flex gap-2">
+            <button className="btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</button>
+            <button className="btn-secondary btn-sm" disabled={page * PAGE_SIZE >= total} onClick={() => setPage((p) => p + 1)}>Next</button>
+          </div>
+        </div>
+      )}
 
       {showNew && <LogInvoiceModal onClose={() => setShowNew(false)} />}
       {openId && (

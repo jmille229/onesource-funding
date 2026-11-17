@@ -235,7 +235,10 @@ export function requestDeadline(timeoutMs = 30_000, uploadTimeoutMs = 5 * 60_000
     // File uploads get longer: a 25 MB phone photo over a slow mobile uplink
     // takes well over 30 seconds, and timing it out mid-stream left the file
     // stored while the browser was told it failed.
-    const ms = req.is('multipart/form-data') ? uploadTimeoutMs : timeoutMs;
+    // So do large Advance Book imports: a few hundred rows run thousands of
+    // statements in one transaction (each still bound by statement_timeout).
+    const long = req.is('multipart/form-data') || req.path.startsWith('/api/admin/invoices/import');
+    const ms = long ? uploadTimeoutMs : timeoutMs;
     const timer = setTimeout(() => {
       if (!res.headersSent) {
         res.status(503).json({ error: 'timeout', message: 'Request timed out' });

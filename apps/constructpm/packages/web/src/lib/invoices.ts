@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query';
 import { api } from './api';
 import {
   INVOICE_STATUS_LABELS, AWAITING_AGENCY, type InvoiceStatus,
@@ -128,3 +129,26 @@ export const canEditInvoices = (role?: string) => ['owner', 'admin', 'project_ma
 export const canRecordPayments = (role?: string) => ['owner', 'admin', 'accountant'].includes(role ?? '');
 export const canSeeFunding = (role?: string) => ['owner', 'admin', 'accountant'].includes(role ?? '');
 export const canVoid = (role?: string) => ['owner', 'admin'].includes(role ?? '');
+
+/** Totals over every invoice (GET /invoices/summary). Refreshed with any invoice change. */
+export interface InvoiceSummary {
+  total_count: number;
+  outstanding_count: number; outstanding_amount: number;
+  awaiting_count: number; awaiting_amount: number; slow_count: number;
+  approved_count: number;
+  payable_count: number; payable_amount: number;
+  approved_unfunded_count: number; approved_unfunded_amount: number;
+  eligible_count: number; eligible_amount: number;
+  funded_count: number; funded_open_count: number; funded_open_amount: number;
+  past_due_count: number; past_due_amount: number;
+  returned_count: number; draft_count: number;
+  billed_this_month: number;
+}
+
+export function useInvoiceSummary() {
+  // Under the 'invoices' key, so every invalidation of invoices refreshes it too.
+  return useQuery<InvoiceSummary>({
+    queryKey: ['invoices', 'summary'],
+    queryFn: () => api.get('/invoices/summary').then((r) => r.data.data),
+  });
+}
