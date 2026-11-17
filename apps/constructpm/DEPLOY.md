@@ -356,6 +356,13 @@ app. The first sign-in shows a QR code to set it up, then ten recovery codes —
 save them. Lost phone and codes: `./infra/reset-operator-2fa.sh <email>` on the
 server, and they set it up again at the next sign-in.
 
+Client users turn two-step sign-in on themselves (Account page), and a company
+owner can require it for their whole company (Settings). A client user who
+lost their phone **and** their recovery codes: `./infra/reset-user-2fa.sh
+<email>`. Call them back on a number you already have before you run it;
+"I lost my phone, please turn it off" is exactly what someone taking over an
+account would say.
+
 **Stop / start (keeps your data):**
 
 ```bash

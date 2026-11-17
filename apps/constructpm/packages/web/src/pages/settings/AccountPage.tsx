@@ -161,7 +161,7 @@ function TwoStep() {
           <div className="flex gap-2 max-w-sm">
             <input className="input font-mono tracking-widest" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric"
                    autoComplete="one-time-code" placeholder="123456" aria-label="Code from the app" required />
-            <button className="btn-primary" disabled={busy}>{busy && <Loader2 className="w-4 h-4 animate-spin" />} Turn on</button>
+            <button className="btn-primary whitespace-nowrap" disabled={busy}>{busy && <Loader2 className="w-4 h-4 animate-spin" />} Turn on</button>
           </div>
           <button type="button" className="text-sm text-slate-500 hover:underline" onClick={() => setSetup(null)}>Cancel</button>
         </form>
