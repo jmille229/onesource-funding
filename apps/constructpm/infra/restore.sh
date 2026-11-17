@@ -25,7 +25,7 @@ BACKUP_DIR="${BACKUP_DIR:-./backups}"
 export BACKUP_DIR
 mkdir -p "$BACKUP_DIR"
 
-latest_local_db() { ls -1t "$BACKUP_DIR"/db-*.sql.gz.enc 2>/dev/null | head -1; }
+latest_local_db() { ls -1t "$BACKUP_DIR"/db-*.sql.gz.enc 2>/dev/null | head -1 || true; }
 
 confirm() {
   echo "$1"

@@ -7,6 +7,9 @@
 # Deploy secrets (RS256 JWT key pair, mounted into the api container)
 secrets/
 
+# Server backups (encrypted) — infra/backup.sh
+backups/
+
 # Dependencies
 node_modules/
 
