@@ -8,7 +8,16 @@ interface User {
   last_name: string;
   role: string;
   company_id: string;
+  /** From /auth/me. False for a new self-serve account until the emailed link is used. */
+  email_verified?: boolean;
+  mfa_enabled?: boolean;
 }
+
+/**
+ * Signing in is done, or needs a second step: a code from an authenticator
+ * app ('verify'), or setting one up because the company requires it ('setup').
+ */
+export type SignInResult = { done: true } | { done: false; mode: 'verify' | 'setup'; challenge: string };
 
 export interface RegisterInput {
   company_name: string;
@@ -16,47 +25,62 @@ export interface RegisterInput {
   password: string;
   first_name: string;
   last_name: string;
+  /** Bot checks: a hidden field (should stay empty) and how long the form was open. */
+  website?: string;
+  form_ms?: number;
 }
 
 interface AuthState {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<SignInResult>;
   register: (input: RegisterInput) => Promise<void>;
-  acceptInvite: (token: string, password: string) => Promise<void>;
+  acceptInvite: (token: string, password: string) => Promise<SignInResult>;
+  /** Open the session from a sign-in response (after the second step). */
+  finishSignIn: (data: { access_token: string }) => Promise<void>;
+  /** Re-read the profile (e.g. after confirming the email). */
+  reloadUser: () => Promise<void>;
   logout: () => Promise<void>;
   loadUser: () => Promise<void>;
 }
 
 let _loading: Promise<void> | null = null;
 
-export const useAuthStore = create<AuthState>((set) => ({
+type SignInData = { access_token?: string; mfa_required?: boolean; mfa_setup_required?: boolean; challenge?: string };
+
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   loading: true,
 
   login: async (email, password) => {
     const res = await api.post('/auth/login', { email, password });
-    const { access_token, user } = res.data.data;
+    return settle(res.data.data, get().finishSignIn);
+  },
+
+  finishSignIn: async (data) => {
     // SECURITY: Token stored in memory only — not localStorage
-    setAccessToken(access_token);
-    set({ user });
+    setAccessToken(data.access_token);
+    const me = await api.get('/auth/me');
+    set({ user: me.data.data, loading: false });
+  },
+
+  reloadUser: async () => {
+    const me = await api.get('/auth/me');
+    set({ user: me.data.data });
   },
 
   // Creates the company and its first owner account in one call, and returns an
   // access token, so a new tenant lands straight in the app.
   register: async (input) => {
     const res = await api.post('/auth/register', input);
-    const { access_token, user } = res.data.data;
-    setAccessToken(access_token);
-    set({ user, loading: false });
+    await get().finishSignIn({ access_token: res.data.data.access_token });
   },
 
   // Set a password from an invite (an approved funding application) and sign in.
+  // Also redeems a password-reset link: same endpoint, same rules.
   acceptInvite: async (token, password) => {
     const res = await api.post('/auth/invite/accept', { token, password });
-    const { access_token, user } = res.data.data;
-    setAccessToken(access_token);
-    set({ user, loading: false });
+    return settle(res.data.data, get().finishSignIn);
   },
 
   logout: async () => {
@@ -92,3 +116,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     return _loading;
   },
 }));
+
+async function settle(data: SignInData, finish: (d: { access_token: string }) => Promise<void>): Promise<SignInResult> {
+  if (data.mfa_required) return { done: false, mode: 'verify', challenge: data.challenge! };
+  if (data.mfa_setup_required) return { done: false, mode: 'setup', challenge: data.challenge! };
+  await finish({ access_token: data.access_token! });
+  return { done: true };
+}

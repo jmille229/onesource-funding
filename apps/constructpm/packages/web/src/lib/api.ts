@@ -40,7 +40,9 @@ api.interceptors.response.use(
     // /login via a full page load — which remounted the app, probed again, and
     // reloaded forever. Let the caller handle this 401.
     const url: string = originalRequest?.url ?? '';
-    const isAuthProbe = url.includes('/auth/refresh') || url.includes('/auth/login');
+    // Likewise a wrong code, password or expired link on the sign-in and
+    // account-security endpoints: a 401 there is an answer, not an expired session.
+    const isAuthProbe = /\/auth\/(refresh|login|mfa|invite|password|email)/.test(url);
 
     if (error.response?.status === 401 && !originalRequest._retry && !isAuthProbe) {
       originalRequest._retry = true;

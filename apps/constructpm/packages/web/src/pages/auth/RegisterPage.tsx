@@ -13,6 +13,9 @@ export function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  // Bot checks (see the API): a field people never see, and how long the form was open.
+  const [website, setWebsite] = useState('');
+  const [openedAt] = useState(() => Date.now());
   const register = useAuthStore((s) => s.register);
   const navigate = useNavigate();
 
@@ -30,6 +33,8 @@ export function RegisterPage() {
         password,
         first_name: firstName,
         last_name: lastName,
+        website,
+        form_ms: Date.now() - openedAt,
       });
       navigate('/dashboard', { replace: true });
     } catch (err) {
@@ -61,6 +66,10 @@ export function RegisterPage() {
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div aria-hidden="true" style={{ position: 'absolute', left: '-10000px', width: 1, height: 1, overflow: 'hidden' }}>
+              <label htmlFor="reg_website">Website</label>
+              <input id="reg_website" tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} />
+            </div>
             <div>
               <label className="label" htmlFor="company_name">Company name</label>
               <input

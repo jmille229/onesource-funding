@@ -3,11 +3,13 @@ import { z } from 'zod';
 import argon2 from 'argon2';
 import { randomUUID, createHash } from 'crypto';
 import { readPool, writePool, withTransaction, createRlsClient } from '../../lib/db.js';
-import { signAccessToken } from '../../lib/jwt.js';
 import {
   asyncHandler, authRateLimit, refreshRateLimit, authenticate, validate, logger,
 } from '../../middleware/index.js';
 import type { UserRole } from '@constructpm/shared';
+import { sendVerificationEmail } from './security.router.js';
+import { COOKIE_OPTS, completeSignIn, issueSession } from './session.js';
+import { signAccessToken } from '../../lib/jwt.js';
 
 export const authRouter = Router();
 
@@ -18,47 +20,6 @@ const ARGON2_OPTS: argon2.Options & { raw?: false } = {
   parallelism: 4,
 };
 
-const COOKIE_OPTS = {
-  httpOnly: true,
-  secure: process.env['NODE_ENV'] === 'production',
-  sameSite: 'strict' as const,
-  maxAge: 90 * 86400 * 1000,
-  path: '/api/auth',
-};
-
-/**
- * Issues a complete session: a 15-minute access token in the body and a
- * 90-day rotating refresh token in an httpOnly cookie.
- *
- * Login and register both go through here. Register used to return only the
- * access token — no cookie — so a brand-new tenant was silently logged out
- * fifteen minutes after signing up, with nothing for the SPA's silent refresh
- * to fall back on. One code path means one set of session semantics.
- */
-async function issueSession(
-  res: Response,
-  user: { id: string; company_id: string; role: UserRole }
-): Promise<string> {
-  const accessToken = signAccessToken({ userId: user.id, companyId: user.company_id, role: user.role });
-
-  const rawRefresh = randomUUID() + randomUUID();
-  const tokenHash = createHash('sha256').update(rawRefresh).digest('hex');
-  const familyId = randomUUID();
-  const expiry = new Date(Date.now() + 90 * 86400 * 1000);
-
-  // Writes are scoped to the user's own company so the RLS WITH CHECK passes.
-  await withTransaction(user.company_id, async (client) => {
-    await client.query(
-      `INSERT INTO refresh_tokens (company_id, user_id, token_hash, family_id, absolute_expiry)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [user.company_id, user.id, tokenHash, familyId, expiry]
-    );
-    await client.query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
-  });
-
-  res.cookie('refresh_token', rawRefresh, COOKIE_OPTS);
-  return accessToken;
-}
 
 // POST /api/auth/login
 authRouter.post(
@@ -96,28 +57,12 @@ authRouter.post(
       return;
     }
 
-    const accessToken = await issueSession(res, {
-      id: String(user['id']),
-      company_id: String(user['company_id']),
-      role: user['role'] as UserRole,
+    const data = await completeSignIn(res, {
+      id: String(user['id']), company_id: String(user['company_id']), role: user['role'] as UserRole,
+      email: String(user['email']), first_name: String(user['first_name']), last_name: String(user['last_name']),
     });
-
-    logger.info({ user_id: user['id'] }, 'Login successful');
-    res.json({
-      data: {
-        access_token: accessToken,
-        token_type: 'Bearer',
-        expires_in: 900,
-        user: {
-          id: user['id'],
-          email: user['email'],
-          first_name: user['first_name'],
-          last_name: user['last_name'],
-          role: user['role'],
-          company_id: user['company_id'],
-        },
-      },
-    });
+    logger.info({ user_id: user['id'], second_step: !('access_token' in data) }, 'Password accepted');
+    res.json({ data });
   })
 );
 
@@ -142,7 +87,8 @@ authRouter.post(
   })
 );
 
-// POST /api/auth/invite/accept — set a password with the invite, and sign in.
+// POST /api/auth/invite/accept — set a password with the invite (or a
+// password-reset link: same table, same rules), and sign in.
 authRouter.post(
   '/invite/accept',
   authRateLimit,
@@ -161,17 +107,8 @@ authRouter.post(
       res.status(404).json({ error: 'invalid_invite', message: 'This link has expired or was already used.' });
       return;
     }
-    const accessToken = await issueSession(res, user);
-    logger.info({ user_id: user.id }, 'Invite accepted');
-    res.json({
-      data: {
-        access_token: accessToken, token_type: 'Bearer', expires_in: 900,
-        user: {
-          id: user.id, email: user.email, first_name: user.first_name, last_name: user.last_name,
-          role: user.role, company_id: user.company_id,
-        },
-      },
-    });
+    logger.info({ user_id: user.id }, 'Password set from emailed link');
+    res.json({ data: await completeSignIn(res, user) });
   })
 );
 
@@ -267,6 +204,10 @@ authRouter.post(
       password: z.string().min(10).max(128),
       first_name: z.string().min(1).max(50),
       last_name: z.string().min(1).max(50),
+      // Bot checks. `website` is a field people never see (bots fill every
+      // field); `form_ms` is how long the form was open (bots submit at once).
+      website: z.string().max(200).optional(),
+      form_ms: z.number().int().min(0).max(86_400_000).optional(),
     })
   ),
   asyncHandler(async (req, res) => {
@@ -276,7 +217,14 @@ authRouter.post(
       password: string;
       first_name: string;
       last_name: string;
+      website?: string;
+      form_ms?: number;
     };
+    if (body.website || (body.form_ms !== undefined && body.form_ms < 2500)) {
+      logger.warn({ ip: req.ip }, 'signup rejected by bot checks');
+      res.status(422).json({ error: 'validation_error', message: 'Please try again.' });
+      return;
+    }
 
     const hash = await argon2.hash(body.password, ARGON2_OPTS);
     const slug =
@@ -307,6 +255,8 @@ authRouter.post(
     }
 
     const token = await issueSession(res, { id: uid, company_id: cid, role: 'owner' });
+    // A new self-serve account starts unverified; the link arrives by email.
+    void sendVerificationEmail(uid).catch((err) => logger.error({ err }, 'verification email failed'));
     res.status(201).json({
       data: {
         access_token: token,
@@ -333,7 +283,8 @@ authRouter.get(
     const db = createRlsClient(readPool, req.auth.companyId);
     const r = await db.query(
       `SELECT id, email, first_name, last_name, role, avatar_url, phone,
-              job_title, is_active, company_id, last_login_at
+              job_title, is_active, company_id, last_login_at,
+              email_verified_at IS NOT NULL AS email_verified, mfa_enabled
        FROM users WHERE id = $1`,
       [req.auth.userId]
     );

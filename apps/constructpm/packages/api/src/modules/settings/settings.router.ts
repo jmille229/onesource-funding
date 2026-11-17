@@ -31,6 +31,8 @@ const companySettingsSchema = z.object({
   // Jobs, budgets, the project dashboard and reports. Unset = the default
   // for the company (off for One Source clients, on for everyone else).
   project_tools:           z.boolean().optional(),
+  // Everyone at the company must use two-step sign-in (set up at next sign-in).
+  require_mfa:             z.boolean().optional(),
 }).strict();
 
 // GET /api/settings/company
@@ -77,6 +79,17 @@ settingsRouter.patch(
   asyncHandler(async (req, res) => {
     const { settings, ...fields } = req.body as Record<string, unknown>;
     const db = createRlsClient(writePool, req.auth.companyId);
+
+    // Requiring two-step sign-in starts with yourself, so turning it on can't
+    // lock out the person doing it.
+    if ((settings as { require_mfa?: boolean } | undefined)?.require_mfa === true) {
+      const me = await readPool.query<{ mfa_enabled: boolean }>(`SELECT mfa_enabled FROM auth_mfa_state($1)`, [req.auth.userId]);
+      if (!me.rows[0]?.mfa_enabled) {
+        res.status(409).json({ error: 'conflict', code: 'mfa_self_first',
+          message: 'Turn on two-step sign-in for yourself first, then require it for everyone.' });
+        return;
+      }
+    }
 
     const allowed = ['name', 'address_line1', 'city', 'state_code', 'zip', 'phone', 'website', 'license_number'];
     const keys = Object.keys(fields).filter(k => allowed.includes(k));

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, FolderKanban, Loader2, Users } from 'lucide-react';
+import { Building2, FolderKanban, Loader2, ShieldCheck, Users } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { api, apiError, formatDate } from '../../lib/api';
 import { useAuthStore } from '../../stores/auth.store';
@@ -8,7 +9,7 @@ import { useAuthStore } from '../../stores/auth.store';
 interface Company {
   id: string; name: string; phone: string | null; website: string | null; address_line1: string | null;
   city: string | null; state_code: string | null; zip: string | null; license_number: string | null;
-  settings?: { project_tools?: boolean; portal_mode?: string };
+  settings?: { project_tools?: boolean; portal_mode?: string; require_mfa?: boolean };
 }
 
 interface TeamMember {
@@ -51,6 +52,7 @@ export function SettingsPage() {
       </div>
       <CompanyDetails company={company} />
       <ProjectTools on={company.settings?.project_tools === true} />
+      <RequireTwoStep on={company.settings?.require_mfa === true} />
       <Team />
     </div>
   );
@@ -175,6 +177,48 @@ function ProjectTools({ on }: { on: boolean }) {
           </p>
         </div>
         <button role="switch" aria-checked={on} aria-label="Project tools" disabled={busy} onClick={() => void toggle()}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                  on ? 'bg-brand-600' : 'bg-slate-300'}`}>
+          <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+            on ? 'translate-x-5' : 'translate-x-0.5'}`} />
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/** Everyone at the company must use two-step sign-in. They set it up at their next sign-in. */
+function RequireTwoStep({ on }: { on: boolean }) {
+  const qc = useQueryClient();
+  const user = useAuthStore((s) => s.user);
+  const [busy, setBusy] = useState(false);
+  const toggle = async () => {
+    if (on && !window.confirm('Stop requiring two-step sign-in? People who use it keep it; others can turn it off.')) return;
+    setBusy(true);
+    try {
+      await api.patch('/settings/company', { settings: { require_mfa: !on } });
+      await qc.invalidateQueries({ queryKey: ['company-settings', user?.company_id] });
+      toast.success(on ? 'No longer required' : 'Required for everyone from their next sign-in');
+    } catch (err) {
+      toast.error(apiError(err, 'Couldn’t change that'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="card p-5">
+      <div className="flex items-start gap-4">
+        <div className="flex-1">
+          <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-slate-400" /> Require two-step sign-in
+          </h2>
+          <p className="text-sm text-slate-600 mt-1">
+            Everyone at your company signs in with a password and a code from an authenticator app. Anyone without it
+            set up is walked through it at their next sign-in. Turn it on for yourself first, in{' '}
+            <Link to="/account" className="text-brand-600 hover:underline">Your account</Link>.
+          </p>
+        </div>
+        <button role="switch" aria-checked={on} aria-label="Require two-step sign-in" disabled={busy} onClick={() => void toggle()}
                 className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
                   on ? 'bg-brand-600' : 'bg-slate-300'}`}>
           <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${

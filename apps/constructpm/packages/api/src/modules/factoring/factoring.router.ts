@@ -430,6 +430,15 @@ factoringRouter.post(
     invoice_id: z.string().uuid().nullable().optional(),
   })),
   asyncHandler(async (req, res) => {
+    // The enquiry is how One Source reaches a new prospect, so the address on
+    // it has to be real: self-serve accounts confirm their email first.
+    const v = await createRlsClient(readPool, req.auth.companyId).query<{ ok: boolean }>(
+      `SELECT email_verified_at IS NOT NULL AS ok FROM users WHERE id = $1`, [req.auth.userId]);
+    if (!v.rows[0]?.ok) {
+      res.status(403).json({ error: 'email_unverified', code: 'email_unverified',
+        message: 'Confirm your email address first — check your inbox for the link, or resend it from the banner.' });
+      return;
+    }
     const b = req.body as Record<string, unknown>;
     const created = await withTransaction(req.auth.companyId, (c) =>
       c.query(

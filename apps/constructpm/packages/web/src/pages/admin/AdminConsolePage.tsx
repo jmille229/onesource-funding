@@ -10,19 +10,24 @@ import { ApplicationsPanel } from './ApplicationsPanel';
 import { ImportPanel } from './ImportPanel';
 import { ClientsPanel } from './ClientsPanel';
 import { AdvancesTable } from './AdvancesTable';
+import { SecondStep, type SessionData } from '../../components/SecondStep';
+
+const postAdmin = (path: string, body: object) => adminApi.post(path, body).then((r) => r.data.data);
 
 // ─── Login ────────────────────────────────────────────────────────────────────
 function AdminLogin() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<{ mode: 'verify' | 'setup'; challenge: string } | null>(null);
   const login = useAdminStore((s) => s.login);
+  const finish = useAdminStore((s) => s.finish);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     try {
-      await login(email, password);
+      setStep(await login(email, password));
     } catch (err) {
       const status = (err as { response?: { status?: number } }).response?.status;
       toast.error(status === 503
@@ -43,6 +48,16 @@ function AdminLogin() {
           <span className="text-2xl font-bold text-white">OneSource Console</span>
         </div>
         <div className="card p-8">
+          {step ? (
+            <>
+              <h1 className="text-xl font-bold text-slate-900 mb-4">
+                {step.mode === 'verify' ? 'Two-step sign-in' : 'Set up two-step sign-in'}
+              </h1>
+              <SecondStep mode={step.mode} challenge={step.challenge} post={postAdmin} issuer="One Source console"
+                          onCancel={() => { setStep(null); setPassword(''); }}
+                          onDone={(d: SessionData) => finish(d as SessionData & { user: { email: string } })} />
+            </>
+          ) : (<>
           <h1 className="text-xl font-bold text-slate-900 mb-1">Operator sign in</h1>
           <p className="text-sm text-slate-500 mb-6">Factoring administration</p>
           <form onSubmit={submit} className="space-y-4">
@@ -62,6 +77,7 @@ function AdminLogin() {
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Sign in
             </button>
           </form>
+          </>)}
         </div>
         <p className="text-xs text-slate-500 mt-4 text-center">
           Operator accounts are separate from client logins.

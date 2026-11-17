@@ -6,7 +6,8 @@ import {
   LogOut, HardHat, Menu, X, Banknote, Settings,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth.store';
-import { api } from '../../lib/api';
+import { api, apiError } from '../../lib/api';
+import { toast } from 'sonner';
 import { useFundingAccount } from '../../lib/funding';
 import logo from '../../assets/onesource-logo.png';
 import { clsx } from 'clsx';
@@ -134,17 +135,18 @@ function SidebarContent({ onNavigate, ws }: { onNavigate?: () => void; ws: Works
 
       <div className="px-3 py-4 border-t border-slate-700 flex-shrink-0">
         <div className="flex items-center gap-3 px-3 py-2 rounded-md">
-          <div className="w-8 h-8 rounded-full bg-brand-600 flex items-center justify-center text-sm font-semibold flex-shrink-0">
-            {user?.first_name?.[0]}{user?.last_name?.[0]}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate">
-              {user?.first_name} {user?.last_name}
-            </p>
-            <p className="text-xs text-slate-400 capitalize truncate">
-              {user?.role?.replace('_', ' ')}
-            </p>
-          </div>
+          <NavLink to="/account" onClick={onNavigate} title="Your account"
+                   className="flex flex-1 min-w-0 items-center gap-3 rounded-md -m-1 p-1 hover:bg-slate-800">
+            <div className="w-8 h-8 rounded-full bg-brand-600 flex items-center justify-center text-sm font-semibold flex-shrink-0">
+              {user?.first_name?.[0]}{user?.last_name?.[0]}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white truncate">
+                {user?.first_name} {user?.last_name}
+              </p>
+              <p className="text-xs text-slate-400 truncate">Your account</p>
+            </div>
+          </NavLink>
           {/* Always visible. This was opacity-0 until hover, so there was no way
               to log out at all on a touch device. */}
           <button
@@ -245,6 +247,7 @@ export function AppLayout() {
         </header>
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden">
+          <ConfirmEmailBanner />
           {/* Project tools off: their screens lead to Invoices, the home screen. */}
           {ws === null
             ? <div className="p-10 flex justify-center"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-slate-400" /></div>
@@ -253,6 +256,23 @@ export function AppLayout() {
               : <Outlet />}
         </main>
       </div>
+    </div>
+  );
+}
+
+/** A new self-serve account hasn't confirmed its email yet: a quiet reminder with a resend. */
+function ConfirmEmailBanner() {
+  const user = useAuthStore((s) => s.user);
+  const [sent, setSent] = useState(false);
+  if (!user || user.email_verified !== false) return null;
+  const resend = () => api.post('/auth/email/verify/resend')
+    .then(() => setSent(true))
+    .catch((e) => toast.error(apiError(e, 'Couldn’t send it')));
+  return (
+    <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-900 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span>Confirm your email: we sent a link to <strong>{user.email}</strong>.</span>
+      {sent ? <span className="text-amber-700">Sent again.</span>
+            : <button className="font-medium underline" onClick={() => void resend()}>Resend</button>}
     </div>
   );
 }

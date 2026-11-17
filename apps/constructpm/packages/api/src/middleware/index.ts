@@ -183,6 +183,43 @@ export function refreshRateLimit(req: Request, res: Response, next: NextFunction
     { error: 'too_many_requests', message: 'Too many session refreshes. Try again shortly.' });
 }
 
+// Two-step sign-in codes: per account, not per IP, so guessing is bounded no
+// matter how many addresses it comes from. Six tries per five minutes; a
+// 6-digit code then takes months to guess at the limit.
+const mfaLimiter = makeRateLimiter({ points: 6, duration: 300, keyPrefix: 'rl:mfa' });
+export async function consumeMfaAttempt(key: string): Promise<boolean> {
+  try {
+    await mfaLimiter.consume(key);
+    return true;
+  } catch (rej) {
+    if (rej instanceof RateLimiterRes) return false;
+    logger.warn({ err: rej }, 'mfa limiter unavailable — failing open');
+    return true;
+  }
+}
+
+// Password-reset and verification emails: per address, so one inbox can't be
+// flooded from many IPs.
+const emailLimiter = makeRateLimiter({ points: 5, duration: 3600, keyPrefix: 'rl:email' });
+export async function consumeEmailSend(key: string): Promise<boolean> {
+  try {
+    await emailLimiter.consume(key.toLowerCase());
+    return true;
+  } catch (rej) {
+    if (rej instanceof RateLimiterRes) return false;
+    return true;
+  }
+}
+
+// Operator console: per operator. Generous — the console loads several lists
+// at once — but bounded, so a stolen operator session can't scrape at speed.
+const operatorLimiter = makeRateLimiter({ points: 600, duration: 60, keyPrefix: 'rl:operator' });
+export function operatorRateLimit(req: Request, res: Response, next: NextFunction) {
+  const key = req.platform?.userId ?? req.ip ?? 'unknown';
+  limit(operatorLimiter, key, res, next,
+    { error: 'rate_limit_exceeded', message: 'Too many requests. Please slow down.' });
+}
+
 // ─── Request timeout ─────────────────────────────────────────────────────────
 export function requestDeadline(timeoutMs = 30_000, uploadTimeoutMs = 5 * 60_000) {
   return (req: Request, res: Response, next: NextFunction) => {

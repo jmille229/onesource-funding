@@ -16,6 +16,9 @@ import { TasksPage } from './pages/tasks/TasksPage';
 import { InvoicesPage } from './pages/invoices/InvoicesPage';
 import { ContactsPage } from './pages/contacts/ContactsPage';
 import { ReportsPage } from './pages/reports/ReportsPage';
+import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
+import { VerifyEmailPage } from './pages/auth/VerifyEmailPage';
+import { AccountPage } from './pages/settings/AccountPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { FactoringPage } from './pages/factoring/FactoringPage';
 import { AdminConsolePage } from './pages/admin/AdminConsolePage';
@@ -81,6 +84,9 @@ function SoftwareApp() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/accept-invite" element={<AcceptInvitePage />} />
+          <Route path="/reset-password" element={<AcceptInvitePage mode="reset" />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/verify-email" element={<VerifyEmailPage />} />
           {/* The application also lives here, for local development and as a
               fallback before the apply subdomain is set up. */}
           <Route path="/apply" element={<ApplyPage />} />
@@ -106,6 +112,7 @@ function SoftwareApp() {
             <Route path="reports" element={<ReportsPage />} />
             <Route path="funding" element={<FactoringPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="account" element={<AccountPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

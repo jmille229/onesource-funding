@@ -41,7 +41,9 @@ adminApi.interceptors.response.use(
 interface AdminState {
   email: string | null;
   ready: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  /** Password checked: always followed by a code (or, the first time, setting one up). */
+  login: (email: string, password: string) => Promise<{ mode: 'verify' | 'setup'; challenge: string }>;
+  finish: (data: { access_token: string; user: { email: string } }) => void;
   logout: () => void;
 }
 
@@ -50,8 +52,12 @@ export const useAdminStore = create<AdminState>((set) => ({
   ready: true,
   login: async (email, password) => {
     const r = await adminApi.post('/auth/login', { email, password });
-    _adminToken = r.data.data.access_token;
-    set({ email: r.data.data.user.email });
+    const d = r.data.data as { mfa_required?: boolean; challenge: string };
+    return { mode: d.mfa_required ? 'verify' : 'setup', challenge: d.challenge };
+  },
+  finish: (data) => {
+    _adminToken = data.access_token;
+    set({ email: data.user.email });
   },
   logout: () => {
     _adminToken = null;
