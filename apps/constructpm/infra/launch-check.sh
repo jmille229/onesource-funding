@@ -56,12 +56,11 @@ if [ -n "$newest" ]; then
 else
   no "no encrypted backup yet" "./infra/backup.sh"
 fi
-if [ -f "$BACKUP_DIR/restore_check.log" ]; then
-  d=$(( $(age_h "$BACKUP_DIR/restore_check.log") / 24 ))
-  e="$(grep -c ERROR "$BACKUP_DIR/restore_check.log" || true)"
-  if [ "$d" -gt 35 ]; then no "last restore test ${d} days ago" "./infra/restore.sh verify (monthly)"
-  elif [ "$e" != "0" ]; then no "last restore test had $e errors" "see $BACKUP_DIR/restore_check.log"
-  else ok "restore tested ${d} day(s) ago, no errors"; fi
+if [ -f "$BACKUP_DIR/restore_check.ok" ]; then
+  d=$(( $(age_h "$BACKUP_DIR/restore_check.ok") / 24 ))
+  [ "$d" -gt 35 ] && no "last restore test passed ${d} days ago" "./infra/restore.sh verify (monthly)" || ok "restore test passed ${d} day(s) ago"
+elif [ -f "$BACKUP_DIR/restore_check.log" ]; then
+  no "last restore test didn't pass" "./infra/restore.sh verify, and see $BACKUP_DIR/restore_check.log"
 else
   no "restore never tested" "./infra/restore.sh verify"
 fi
