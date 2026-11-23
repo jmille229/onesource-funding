@@ -409,7 +409,8 @@ then `./infra/restore.sh db …` and, if files lived on MinIO, `restore.sh files
 - **Uptime:** an external check (UptimeRobot, Better Stack, Healthchecks — all
   have free tiers) on `https://app.os-funding.com/health/ready` and
   `https://apply.os-funding.com/`, alerting you by email/SMS. `/health/ready`
-  answers 200 only when the database and Redis are reachable.
+  answers 200 only when the app can reach its database (the page itself
+  always answers, so don't monitor `/` on this host).
 - **Errors:** set `SENTRY_DSN` (a free Sentry project) and redeploy. Server
   errors, crashes and browser crashes are reported; no client data is sent.
 - **Backups and disk:** the `BACKUP_HEALTHCHECK_URL` ping above.

@@ -55,6 +55,9 @@ if ! $DB_ONLY; then
 fi
 
 if offsite_configured; then
+  # The plain local copy made while there was no off-site storage isn't needed
+  # any more (the files are off-site, encrypted), and shouldn't sit on disk.
+  rm -rf "$BACKUP_DIR/files-mirror"
   echo "[backup $STAMP] copying off the server"
   rclone copy "/backups/db-$STAMP.sql.gz.enc" "offsite:${BACKUP_S3_BUCKET}/db/"
   if ! $DB_ONLY; then
