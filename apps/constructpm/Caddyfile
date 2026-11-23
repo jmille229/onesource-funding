@@ -49,7 +49,9 @@
 		reverse_proxy api:3001
 	}
 
-	handle /health {
+	# /health (the API is up) and /health/ready (it can reach the database):
+	# both must reach the API, or an uptime monitor gets the web page's 200.
+	handle /health* {
 		reverse_proxy api:3001
 	}
 

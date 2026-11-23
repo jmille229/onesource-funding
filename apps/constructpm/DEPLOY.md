@@ -346,11 +346,22 @@ image is no longer published — so a replacement server couldn't start it.)
    ./infra/migrate-files.sh          # copies (safe to re-run)
    ./infra/migrate-files.sh --check  # every file present?
    ```
-4. Switch: set `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET_FILES`, `S3_ACCESS_KEY`,
-   `S3_SECRET_KEY` to the new bucket (examples in `.env.production.example`;
-   R2 and Spaces also need `S3_SERVER_SIDE_ENCRYPTION=none`), run
-   `./infra/migrate-files.sh` once more, then `./infra/deploy.sh`. MinIO stops
-   on its own once nothing points at it. Its data stays in the
+4. Switch. Stop the API so nothing is uploaded during the last copy (about a
+   minute offline), copy once more, point `S3_*` at the new bucket, deploy:
+   ```bash
+   C="docker compose --env-file .env.production -f docker-compose.prod.yml"
+   $C stop api
+   ./infra/migrate-files.sh && ./infra/migrate-files.sh --check
+   cp .env.production secrets/env.before-new-storage     # to undo: copy it back, deploy
+   NEWS3="$(sed -n -E 's/^NEW_(S3_(ENDPOINT|REGION|BUCKET_FILES|ACCESS_KEY|SECRET_KEY))=/\1=/p' .env.production)"
+   sed -i -E '/^(NEW_)?S3_(ENDPOINT|REGION|BUCKET_FILES|ACCESS_KEY|SECRET_KEY|SERVER_SIDE_ENCRYPTION|FORCE_PATH_STYLE)=/d' .env.production
+   printf '%s\nS3_SERVER_SIDE_ENCRYPTION=none\nS3_FORCE_PATH_STYLE=true\n' "$NEWS3" >> .env.production; unset NEWS3
+   ./infra/deploy.sh
+   ```
+   `S3_SERVER_SIDE_ENCRYPTION=none` is for R2 and Spaces, which encrypt
+   everything at rest themselves; for AWS use `AES256` and
+   `S3_FORCE_PATH_STYLE=false`. Then open an existing invoice's attachment in
+   the app to check downloads. The old files stay in the
    `constructpm_minio_data` volume until you delete it — wait a few weeks.
 
 ### Backups
@@ -398,7 +409,8 @@ then `./infra/restore.sh db …` and, if files lived on MinIO, `restore.sh files
 - **Uptime:** an external check (UptimeRobot, Better Stack, Healthchecks — all
   have free tiers) on `https://app.os-funding.com/health/ready` and
   `https://apply.os-funding.com/`, alerting you by email/SMS. `/health/ready`
-  answers 200 only when the database and Redis are reachable.
+  answers 200 only when the app can reach its database (the page itself
+  always answers, so don't monitor `/` on this host).
 - **Errors:** set `SENTRY_DSN` (a free Sentry project) and redeploy. Server
   errors, crashes and browser crashes are reported; no client data is sent.
 - **Backups and disk:** the `BACKUP_HEALTHCHECK_URL` ping above.

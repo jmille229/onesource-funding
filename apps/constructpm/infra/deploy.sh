@@ -76,6 +76,14 @@ $COMPOSE run --rm migrate
 echo "▶ starting services"
 $COMPOSE up -d --remove-orphans
 
+# Caddy reads its settings once, and a single-file bind mount keeps showing
+# the old file after `git pull` replaces it. So when the Caddyfile changed,
+# recreate the container: a second or two, certificates kept in caddy_data.
+if [ "$($COMPOSE exec -T caddy sha256sum /etc/caddy/Caddyfile 2>/dev/null | cut -d' ' -f1)" != "$(sha256sum Caddyfile | cut -d' ' -f1)" ]; then
+  echo "▶ web server settings changed — restarting Caddy"
+  $COMPOSE up -d --force-recreate --no-deps caddy
+fi
+
 echo "▶ waiting for the API to report ready"
 for i in $(seq 1 30); do
   if $COMPOSE exec -T api node -e "require('http').get('http://localhost:3001/health/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" 2>/dev/null; then
