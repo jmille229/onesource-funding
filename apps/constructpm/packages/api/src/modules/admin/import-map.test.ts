@@ -166,7 +166,11 @@ describe('toAdvancePayload', () => {
       creditor: "PHDC",
       invoice_number: "INV-42",
       face_amount: 9600,
+      advance_amount: null,
       advanced_on: "2025-08-14",
+      contact_name: null,
+      sales_person: null,
+      project: null,
       notes: null,
       collection: null,
     });
@@ -206,14 +210,32 @@ describe('toAdvancePayload', () => {
     })).toThrow(/placeholder, not a real invoice number/);
   });
 
-  it('preserves operator context in notes (Sales person, Project, Ready flags)', () => {
+  it('reads Name, Sales person and Project into their own fields', () => {
     const p = toAdvancePayload({
       ...base,
-      "Sales person": "Zac", "Project": "241 N. 10th St.",
-      "Contract Ready": "Yes", "Invoice Ready": "Yes",
-      "Notes": "spoke with AP",
+      "Name": " Calvin Snowden Jr ", "Sales person": "Zac", "Project": "241 N. 10th St. PCDC- Housing",
     });
-    expect(p.notes).toBe("spoke with AP [sales=Zac | project=241 N. 10th St. | contract=yes | invoice=yes]");
+    expect(p).toMatchObject({ contact_name: "Calvin Snowden Jr", sales_person: "Zac", project: "241 N. 10th St. PCDC- Housing" });
+    expect(p.notes).toBeNull();
+  });
+
+  it('keeps the Ready flags in notes so they are not lost', () => {
+    const p = toAdvancePayload({
+      ...base, "Sales person": "Zac", "Contract Ready": "Yes", "Invoice Ready": "Yes", "Notes": "spoke with AP",
+    });
+    expect(p.notes).toBe("spoke with AP [contract=yes | invoice=yes]");
+  });
+
+  it('takes Total Advanced as what was advanced; blank leaves it to the schedule', () => {
+    expect(toAdvancePayload({ ...base, "Total Invoice": "48,690.00", "Total Advanced": "$38,952.00" }).advance_amount).toBe(38952);
+    expect(toAdvancePayload({ ...base, "Total Advanced": "" }).advance_amount).toBeNull();
+    expect(toAdvancePayload({ ...base, "Total Advanced": "0" }).advance_amount).toBeNull();
+    expect(() => toAdvancePayload({ ...base, "Total Advanced": "9,601" })).toThrow(/Total Advanced: more than the Total Invoice/);
+    expect(() => toAdvancePayload({ ...base, "Total Advanced": "(100)" })).toThrow(/Total Advanced/);
+  });
+
+  it('refuses an over-long Project rather than cutting it off', () => {
+    expect(() => toAdvancePayload({ ...base, "Project": "x".repeat(301) })).toThrow(/Project: longer than 300/);
   });
 
   it('reports the first bad field with a name the operator can find', () => {

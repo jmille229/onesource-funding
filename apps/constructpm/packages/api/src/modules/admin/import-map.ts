@@ -288,7 +288,13 @@ export interface AdvanceRowPayload {
    *  factored_invoices UUID id is its stable identifier. */
   invoice_number: string | null;
   face_amount: number;
+  /** Total Advanced, when the sheet has it; otherwise the schedule's rate sets it. */
+  advance_amount: number | null;
   advanced_on: string;
+  /** Name, Sales person and Project (V023): their own fields, not notes. */
+  contact_name: string | null;
+  sales_person: string | null;
+  project: string | null;
   /** When present, an operator note that lands on the funded row. */
   notes: string | null;
   /** When Date Paid Back is present, the settlement to chain after funding. */
@@ -304,8 +310,9 @@ export interface AdvanceRowPayload {
  * a single readable message on first failure — the importer catches these and
  * attributes them to a row number for the operator.
  *
- * Any field the domain does not use (Sales person, Project, Fees, Days, etc)
- * is folded into notes so it is not silently lost. This is the record the
+ * Name, Sales person and Project have their own fields. Total Advanced is
+ * what was actually advanced. Contract Ready and Invoice Ready are folded into
+ * notes so they are not silently lost; Fees, Days and the like are computed. This is the record the
  * operator has been maintaining, and dropping their annotations at the door of
  * the system is how internal tools lose trust.
  */
@@ -323,6 +330,23 @@ export function toAdvancePayload(row: WorkbookRow): AdvanceRowPayload {
   }
   const advanced_on = parseDate(row["Adv Date"], "Adv Date");
   if (advanced_on === null) throw new Error("Adv Date: missing");
+
+  // Blank or zero: the client's advance rate decides, as it always has.
+  const advanced = parseMoney(row["Total Advanced"], "Total Advanced");
+  const advance_amount = advanced !== null && advanced !== 0 ? advanced : null;
+  if (advance_amount !== null && advance_amount < 0) throw new Error("Total Advanced: can't be negative");
+  if (advance_amount !== null && advance_amount > face_amount + 0.005) {
+    throw new Error("Total Advanced: more than the Total Invoice");
+  }
+
+  const text = (col: "Name" | "Sales person" | "Project", max: number) => {
+    const v = (row[col] ?? "").trim();
+    if (v.length > max) throw new Error(`${col}: longer than ${max} characters`);
+    return v || null;
+  };
+  const contact_name = text("Name", 200);
+  const sales_person = text("Sales person", 100);
+  const project = text("Project", 300);
 
   // Optional collection leg — only if BOTH Date Paid Back and Amount Received
   // are present. Half a collection (a date but no amount, or vice versa) is
@@ -349,10 +373,6 @@ export function toAdvancePayload(row: WorkbookRow): AdvanceRowPayload {
   const bare = (row["Notes"] ?? "").trim();
   if (bare) parts.push(bare);
   const tags: string[] = [];
-  const sales = (row["Sales person"] ?? "").trim();
-  const project = (row["Project"] ?? "").trim();
-  if (sales) tags.push(`sales=${sales}`);
-  if (project) tags.push(`project=${project}`);
   if ((row["Contract Ready"] ?? "").trim().toLowerCase() === "yes") tags.push("contract=yes");
   if ((row["Invoice Ready"] ?? "").trim().toLowerCase() === "yes") tags.push("invoice=yes");
   if (tags.length) parts.push(`[${tags.join(" | ")}]`);
@@ -362,7 +382,11 @@ export function toAdvancePayload(row: WorkbookRow): AdvanceRowPayload {
     creditor,
     invoice_number,
     face_amount,
+    advance_amount,
     advanced_on,
+    contact_name,
+    sales_person,
+    project,
     notes: parts.length ? parts.join(" ") : null,
     collection,
   };

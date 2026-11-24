@@ -49,3 +49,6 @@ minio_data/
 
 # TypeScript build info
 *.tsbuildinfo
+
+# Local Redis snapshots
+dump.rdb

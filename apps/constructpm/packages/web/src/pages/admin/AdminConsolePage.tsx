@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Shield, Loader2, LogOut } from 'lucide-react';
 import { adminApi, useAdminStore, hasAdminToken } from '../../lib/admin-api';
@@ -10,6 +10,7 @@ import { ApplicationsPanel } from './ApplicationsPanel';
 import { ImportPanel } from './ImportPanel';
 import { ClientsPanel } from './ClientsPanel';
 import { AdvancesTable } from './AdvancesTable';
+import { FundForm } from './FundForm';
 import { SecondStep, type SessionData } from '../../components/SecondStep';
 import { SystemPanel, EmailOffBanner } from './SystemPanel';
 
@@ -85,97 +86,6 @@ function AdminLogin() {
         </p>
       </div>
     </div>
-  );
-}
-
-// ─── Fund an invoice ──────────────────────────────────────────────────────────
-function FundForm({ onDone }: { onDone: () => void }) {
-  const qc = useQueryClient();
-  const [form, setForm] = useState({
-    company_id: '', debtor_id: '', invoice_number: '', face_amount: '',
-    advanced_on: new Date().toISOString().slice(0, 10), invoice_due_on: '',
-  });
-
-  const { data: clients } = useQuery({
-    queryKey: ['admin-clients'], queryFn: () => adminApi.get('/clients').then(r => r.data.data),
-  });
-  const { data: debtors } = useQuery({
-    queryKey: ['admin-debtors'], queryFn: () => adminApi.get('/debtors').then(r => r.data.data),
-  });
-
-  const fund = useMutation({
-    mutationFn: () => adminApi.post('/invoices', {
-      ...form,
-      invoice_number: form.invoice_number.trim() || null,
-      face_amount: Number(form.face_amount),
-      invoice_due_on: form.invoice_due_on || null,
-    }),
-    onSuccess: () => {
-      toast.success('Advance funded');
-      qc.invalidateQueries({ queryKey: ['admin-invoices'] });
-      qc.invalidateQueries({ queryKey: ['admin-clients'] });
-      onDone();
-    },
-    onError: (e: { response?: { data?: { message?: string } } }) =>
-      toast.error(e.response?.data?.message ?? 'Could not fund the invoice'),
-  });
-
-  const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-    setForm((f) => ({ ...f, [k]: e.target.value }));
-
-  return (
-    <form className="card p-4 space-y-4 mb-5"
-          onSubmit={(e) => { e.preventDefault(); fund.mutate(); }}>
-      <h3>Fund an invoice</h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label className="label">Client</label>
-          <select className="input" value={form.company_id} onChange={set('company_id')} required>
-            <option value="">Select…</option>
-            {(clients ?? []).map((c: { company_id: string; company_name: string }) => (
-              <option key={c.company_id} value={c.company_id}>{c.company_name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="label">Debtor</label>
-          <select className="input" value={form.debtor_id} onChange={set('debtor_id')} required>
-            <option value="">Select…</option>
-            {(debtors ?? []).map((d: { id: string; legal_name: string }) => (
-              <option key={d.id} value={d.id}>{d.legal_name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="label">Invoice number</label>
-          <input className="input" value={form.invoice_number} onChange={set('invoice_number')}
-                 placeholder="Optional — leave blank for an auto INV-… id" />
-        </div>
-        <div>
-          <label className="label">Face amount</label>
-          <input className="input" type="number" step="0.01" min="0.01"
-                 value={form.face_amount} onChange={set('face_amount')} required />
-        </div>
-        <div>
-          <label className="label">Advanced on</label>
-          <input className="input" type="date" value={form.advanced_on} onChange={set('advanced_on')} required />
-        </div>
-        <div>
-          <label className="label">Invoice due</label>
-          <input className="input" type="date" value={form.invoice_due_on} onChange={set('invoice_due_on')} />
-        </div>
-      </div>
-      <p className="text-xs text-slate-500">
-        Advance and reserve are derived from the client’s schedule and snapshotted onto the
-        advance, so later schedule edits can’t rewrite funded terms.
-      </p>
-      <div className="flex gap-2">
-        <button className="btn-primary" disabled={fund.isPending}>
-          {fund.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Fund
-        </button>
-        <button type="button" className="btn-secondary" onClick={onDone}>Cancel</button>
-      </div>
-    </form>
   );
 }
 

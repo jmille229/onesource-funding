@@ -22,6 +22,10 @@ export interface BookAdvance extends ExistingAdvance {
   closed_on: string | null;
   notes: string | null;
   advance_rate_pct: number;
+  advance_amount: number;
+  contact_name: string | null;
+  sales_person: string | null;
+  project: string | null;
   received: number | null;
   payment_memo: string | null;
 }
@@ -60,7 +64,8 @@ export async function planImport(
     const r = await c.query(
       `SELECT fi.id, fi.company_id, fi.invoice_number, fi.advanced_on::text AS advanced_on, fi.face_amount::float AS face_amount,
               fi.debtor_id, fi.debtor_name, fi.status, fi.collected_on::text AS collected_on, fi.closed_on::text AS closed_on,
-              fi.notes, fi.advance_rate_pct::float AS advance_rate_pct,
+              fi.notes, fi.advance_rate_pct::float AS advance_rate_pct, fi.advance_amount::float AS advance_amount,
+              fi.contact_name, fi.sales_person, fi.project,
               (SELECT SUM(fe.amount)::float FROM factoring_events fe
                 WHERE fe.factored_invoice_id = fi.id AND fe.event_type = 'payment_received') AS received,
               (SELECT string_agg(fe.memo, '; ' ORDER BY fe.occurred_on) FROM factoring_events fe
@@ -153,7 +158,13 @@ export async function planImport(
     if (Math.abs(payload.face_amount - e.face_amount) >= 0.005) {
       add('face_amount', 'Invoice amount', money(e.face_amount), money(payload.face_amount));
     }
+    if (payload.advance_amount !== null && Math.abs(payload.advance_amount - e.advance_amount) >= 0.005) {
+      add('advance_amount', 'Total advanced', money(e.advance_amount), money(payload.advance_amount));
+    }
     if (payload.advanced_on !== e.advanced_on) add('advanced_on', 'Advance date', e.advanced_on, payload.advanced_on);
+    if (payload.contact_name && payload.contact_name !== e.contact_name) add('contact_name', 'Name', e.contact_name ?? '—', payload.contact_name);
+    if (payload.sales_person && payload.sales_person !== e.sales_person) add('sales_person', 'Sales person', e.sales_person ?? '—', payload.sales_person);
+    if (payload.project && payload.project !== e.project) add('project', 'Project', e.project ?? '—', payload.project);
     if (payload.notes && payload.notes !== (e.notes ?? '')) add('notes', 'Notes', e.notes ?? '—', payload.notes);
     const col = payload.collection;
     if (col) {
@@ -168,7 +179,7 @@ export async function planImport(
       errors.push({ row, message: `Adv Date ${payload.advanced_on} is after the recorded payment on ${e.collected_on}` });
       continue;
     }
-    if (changes.length && e.status === 'closed' && changes.some((x) => ['face_amount', 'collected_on', 'amount_received'].includes(x.field))) {
+    if (changes.length && e.status === 'closed' && changes.some((x) => ['face_amount', 'advance_amount', 'collected_on', 'amount_received'].includes(x.field))) {
       warnings.push(`Already closed — the reserve released on ${e.closed_on} stays as recorded`);
     }
     if (e.status === 'charged_back' && changes.length) warnings.push('This advance was charged back; only its details are updated');
