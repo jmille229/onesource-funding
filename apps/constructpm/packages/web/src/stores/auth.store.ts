@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { queryClient } from '../lib/queryClient';
 import { api, setAccessToken } from '../lib/api';
 
 interface User {
@@ -58,6 +59,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   finishSignIn: async (data) => {
+    // Nothing cached for whoever used this tab before may show for this account.
+    queryClient.clear();
     // SECURITY: Token stored in memory only — not localStorage
     setAccessToken(data.access_token);
     const me = await api.get('/auth/me');
@@ -89,6 +92,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } finally {
       setAccessToken(null);
       set({ user: null });
+      queryClient.clear();
     }
   },
 
