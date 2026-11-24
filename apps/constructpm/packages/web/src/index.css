@@ -51,7 +51,7 @@
   .filter-bar { @apply flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center mb-4; }
 }
 
-/* One Source–branded screens: navy focus ring instead of the ConstructPM blue. */
+/* One Source–branded screens: navy focus ring instead of the app blue. */
 .os-brand .input:focus { border-color: #193557; --tw-ring-color: #193557; }
 
 /* ─── Touch-device affordances ──────────────────────────────────────────────

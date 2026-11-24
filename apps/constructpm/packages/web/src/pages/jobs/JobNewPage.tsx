@@ -33,7 +33,7 @@ export function JobNewPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
-    name: '', job_number: '', description: '', status: 'lead',
+    name: '', job_number: '', description: '', status: 'active',
     contract_type: 'lump_sum', contract_amount: '',
     start_date: '', end_date: '',
     address_line1: '', city: '', state_code: '', zip: '',

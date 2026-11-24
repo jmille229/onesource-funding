@@ -180,7 +180,7 @@ function AddClientForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
       <div>
         <h3>Add a client</h3>
         <p className="text-sm text-slate-500 mt-0.5">
-          For a client you’ve signed outside the online application. They get the funding-only portal.
+          For a client you’ve signed outside the online application. They sign in to One Source Ledger.
         </p>
       </div>
 
@@ -262,7 +262,7 @@ function AddClientForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
           <p className="flex items-start gap-2"><AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" /> {existing}</p>
           <p>
             You can make that company the funding client instead — they keep their login and their existing
-            ConstructPM tools. Only do this if you’ve confirmed it’s the same business.
+            invoices and jobs. Only do this if you’ve confirmed it’s the same business.
           </p>
           <div className="flex flex-wrap gap-2">
             <button type="button" className="btn-primary btn-sm" disabled={create.isPending} onClick={() => create.mutate(true)}>

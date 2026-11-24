@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2, MailCheck } from 'lucide-react';
 import { api, apiError } from '../../lib/api';
-import logo from '../../assets/onesource-logo.png';
+import { LedgerMark } from '../../components/brand/LedgerMark';
 
 /**
  * Ask for a password-reset link. The answer is the same whether or not the
@@ -32,7 +32,7 @@ export function ForgotPasswordPage() {
     <div className="os-brand min-h-[100dvh] flex items-center justify-center bg-os-mist px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="flex justify-center mb-8">
-          <img src={logo} alt="One Source Funding" className="h-14 w-auto" />
+          <LedgerMark tone="light" size="lg" />
         </div>
         <div className="card p-6 sm:p-8">
           {sent ? (

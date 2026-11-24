@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import QRCode from 'qrcode';
 import { CheckCircle2, KeyRound, Loader2, Mail, ShieldCheck, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
+import { PRODUCT_NAME } from '@constructpm/shared';
 import { api, apiError } from '../../lib/api';
 import { useAuthStore } from '../../stores/auth.store';
 import { RecoveryCodes } from '../../components/SecondStep';
@@ -130,7 +131,7 @@ function TwoStep() {
         {st.enabled ? <span className="badge-green whitespace-nowrap">On</span> : <span className="badge-gray whitespace-nowrap">Off</span>}
       </div>
 
-      {codes && <RecoveryCodes codes={codes} issuer="One Source" onContinue={() => { setCodes(null); void done(); }} />}
+      {codes && <RecoveryCodes codes={codes} issuer={PRODUCT_NAME} onContinue={() => { setCodes(null); void done(); }} />}
 
       {!codes && !st.enabled && !setup && (
         st.available

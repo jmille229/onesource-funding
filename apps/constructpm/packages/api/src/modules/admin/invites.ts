@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'crypto';
+import { PRODUCT_NAME } from '@constructpm/shared';
 import { env } from '../../lib/env.js';
 import { notify } from '../../lib/mailer.js';
 
@@ -23,7 +24,7 @@ export function emailInvite(to: string, firstName: string, link: string, intro: 
     to,
     subject: 'Your One Source Funding account is ready',
     text: `Hi ${firstName},\n\n${intro}\n\n`
-        + `Set your password here to sign in, submit invoices for funding and follow every advance:\n`
+        + `Set your password here to sign in to ${PRODUCT_NAME}, submit invoices for funding and follow every advance:\n`
         + `${link}\n\nThe link works once and expires in ${INVITE_TTL_DAYS} days.\n\nOne Source Funding`,
   });
 }

@@ -14,7 +14,6 @@ import {
 const PAGE_SIZE = 100;
 import { useFundingAccount, ADVANCE_MAX, dismiss, dismissedRecently } from '../../lib/funding';
 import { LogInvoiceModal } from '../../components/invoices/LogInvoiceModal';
-import { useWorkspace } from '../../components/layout/AppLayout';
 import { InvoiceDrawer } from '../../components/invoices/InvoiceDrawer';
 import { InvoiceActionModal, type ActionInvoice } from '../../components/invoices/InvoiceActionModal';
 import { RequestFundingModal } from '../../components/RequestFundingModal';
@@ -74,7 +73,6 @@ export function InvoicesPage() {
   const role = useAuthStore((s) => s.user?.role);
   const funding = useFundingAccount();
   // Jobs are a project-tools idea: with them off, an invoice shows its contract.
-  const projectTools = useWorkspace()?.projectTools ?? false;
   const [showNew, setShowNew] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [quick, setQuick] = useState<{ invoice: InvoiceRow; action: InvoiceAction } | null>(null);
@@ -329,9 +327,9 @@ export function InvoicesPage() {
                     </td>
                     <td className="table-cell-wrap min-w-[11rem] max-w-[17rem]">
                       {inv.customer_name}
-                      {((projectTools && inv.job_name) || inv.contract_reference) && (
+                      {(inv.job_name || inv.contract_reference) && (
                         <div className="text-xs text-slate-500 truncate">
-                          {projectTools && inv.job_name ? inv.job_name : `Contract ${inv.contract_reference}`}
+                          {inv.job_name ? inv.job_name : `Contract ${inv.contract_reference}`}
                         </div>
                       )}
                     </td>

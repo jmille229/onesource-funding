@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Plus, Search, FolderKanban } from 'lucide-react';
-import { api, formatCurrency, formatDate } from '../../lib/api';
+import { api, formatCurrency } from '../../lib/api';
+import { leftToBill } from '../../lib/jobs';
 import type { Job } from '@constructpm/shared';
 
 const STATUS_OPTIONS = ['','lead','bidding','awarded','active','on_hold','substantially_complete','closed','cancelled'];
@@ -29,10 +30,12 @@ export function JobsPage() {
       <div className="page-header">
         <div>
           <h1>Jobs</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{total} total projects</p>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {total} job{total === 1 ? '' : 's'} · group invoices by contract to see what’s billed and what’s left
+          </p>
         </div>
         <Link to="/jobs/new" className="btn-primary">
-          <Plus className="w-4 h-4" /> New Job
+          <Plus className="w-4 h-4" /> New job
         </Link>
       </div>
 
@@ -56,11 +59,11 @@ export function JobsPage() {
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
               <th className="table-header">Job</th>
-              <th className="table-header">Customer</th>
+              <th className="table-header">Agency</th>
               <th className="table-header">Status</th>
               <th className="table-header text-right">Contract</th>
-              <th className="table-header text-right">Budget</th>
-              <th className="table-header">Dates</th>
+              <th className="table-header text-right">Billed</th>
+              <th className="table-header text-right">Left to bill</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -71,8 +74,19 @@ export function JobsPage() {
               <tr>
                 <td colSpan={6} className="px-4 py-12 text-center">
                   <FolderKanban className="w-10 h-10 mx-auto text-slate-300 mb-3" />
-                  <p className="text-slate-500 text-sm">No jobs found</p>
-                  <Link to="/jobs/new" className="btn-primary btn-sm mt-4 inline-flex">Create your first job</Link>
+                  {search || status ? (
+                    <p className="text-slate-500 text-sm">No jobs match</p>
+                  ) : (
+                    <>
+                      <p className="text-slate-700 text-sm font-medium">Group your invoices by job</p>
+                      <p className="text-slate-500 text-sm mt-1 max-w-md mx-auto">
+                        A job is a contract or project. Add its value and every invoice you log against it shows
+                        what you’ve billed, what’s been paid, and what’s left to bill. Optional — invoices don’t need one.
+                      </p>
+                      <Link to="/jobs/new" className="btn-primary btn-sm mt-4 inline-flex">Create your first job</Link>
+                      <p className="text-xs text-slate-400 mt-2">You can also create one while logging an invoice.</p>
+                    </>
+                  )}
                 </td>
               </tr>
             )}
@@ -86,10 +100,20 @@ export function JobsPage() {
                 <td className="table-cell">
                   <span className={STATUS_COLORS[job.status] ?? 'badge-gray'}>{job.status.replace(/_/g,' ')}</span>
                 </td>
-                <td className="table-cell text-right font-medium">{formatCurrency(job.contract_amount)}</td>
-                <td className="table-cell text-right">{formatCurrency(job.total_budget)}</td>
-                <td className="table-cell text-slate-500 text-xs">
-                  {formatDate(job.start_date)} — {formatDate(job.end_date)}
+                <td className="table-cell text-right font-medium tabular-nums">
+                  {job.contract_amount ? formatCurrency(job.contract_amount) : <span className="text-slate-400">—</span>}
+                </td>
+                <td className="table-cell text-right tabular-nums">
+                  {formatCurrency(job.billed ?? 0)}
+                  <p className="text-xs text-slate-500">{job.invoice_count ?? 0} invoice{job.invoice_count === 1 ? '' : 's'}</p>
+                </td>
+                <td className="table-cell text-right tabular-nums">
+                  {(() => {
+                    const left = leftToBill(job.contract_amount, job.billed);
+                    if (left === null) return <span className="text-slate-400">—</span>;
+                    if (left < 0) return <span className="text-amber-700">{formatCurrency(-left)} over</span>;
+                    return formatCurrency(left);
+                  })()}
                 </td>
               </tr>
             ))}

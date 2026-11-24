@@ -10,7 +10,7 @@ import { ApplicationWizard } from './ApplicationWizard';
 
 /**
  * apply.os-funding.com — the funding application, for prospects who don't
- * have (and don't need) a ConstructPM account.
+ * have (and don't need) a One Source Ledger account.
  *
  *   no #t= in the URL → the start form
  *   a valid #t=       → the application, step by step, until it's submitted

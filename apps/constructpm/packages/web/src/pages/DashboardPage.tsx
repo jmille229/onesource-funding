@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
-  FolderKanban, ArrowRight, Banknote, Undo2, FileEdit, Hourglass, CalendarX, CheckCircle2,
+  ArrowRight, Banknote, Undo2, FileEdit, Hourglass, CalendarX, CheckCircle2,
   AlertTriangle, FileText,
 } from 'lucide-react';
 import { api, formatCurrency, formatDate } from '../lib/api';
@@ -12,6 +12,7 @@ import { invoiceStatusBadge, invoiceStatusLabel, fundedBadge, useInvoiceSummary,
 import { useFundingAccount, ADVANCE_MAX } from '../lib/funding';
 import { useWorkspace } from '../components/layout/AppLayout';
 import { InvoiceDrawer } from '../components/invoices/InvoiceDrawer';
+import { leftToBill, billedPct } from '../lib/jobs';
 
 interface InvoiceRow {
   id: string; invoice_number: string; customer_name: string | null; status: string;
@@ -22,12 +23,6 @@ interface InvoiceRow {
 /** How long an agency can sit on an invoice before it's worth a call. */
 const SLOW_APPROVAL_DAYS = 30;
 
-const statusColor: Record<string, string> = {
-  active: 'badge-green', bidding: 'badge-blue', lead: 'badge-gray',
-  awarded: 'badge-yellow', on_hold: 'badge-orange', closed: 'badge-gray',
-  substantially_complete: 'badge-green', cancelled: 'badge-red',
-};
-
 /**
  * Home, for every company: where its invoices stand and what needs doing.
  * Funding appears for a company that factors (and the way in for one that
@@ -36,7 +31,7 @@ const statusColor: Record<string, string> = {
 export function DashboardPage() {
   const user = useAuthStore((s) => s.user);
   const funding = useFundingAccount();
-  const projectTools = useWorkspace()?.projectTools ?? false;
+  const hasJobs = useWorkspace()?.hasJobs ?? false;
   const [openId, setOpenId] = useState<string | null>(null);
 
   const { data: company } = useQuery({
@@ -199,7 +194,7 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {projectTools && <ProjectCards />}
+      {hasJobs && <JobsCard />}
 
       {openId && <InvoiceDrawer invoiceId={openId} onClose={() => setOpenId(null)} />}
     </div>
@@ -232,58 +227,62 @@ function Figure({ label, value, sub, tone }: { label: string; value: number | st
 }
 
 /** Jobs, contract value and hours — for companies with the project tools on. */
-function ProjectCards() {
-  const { data: dash } = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: () => api.get('/reports/dashboard').then((r) => r.data.data),
+/** Open jobs: what's been billed on each, against its contract. Shown once the company has a job. */
+function JobsCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['jobs', 'dashboard'],
+    queryFn: () => api.get('/jobs', { params: { per_page: 50 } }).then((r) => r.data.data as Job[]),
   });
-  const { data: jobsData } = useQuery({
-    queryKey: ['jobs', 'active'],
-    queryFn: () => api.get('/jobs?status=active&per_page=5').then((r) => r.data),
-  });
-  const jobs: Job[] = jobsData?.data ?? [];
-  const jobStats = (dash?.jobs ?? []) as Record<string, unknown>[];
-  const activeJobs = jobStats.find((j) => j['status'] === 'active')?.['count'] ?? 0;
-  const totalValue = jobStats.reduce((s, j) => s + Number(j['total_value'] ?? 0), 0);
+  const open = (data ?? []).filter((j) => !['closed', 'cancelled'].includes(j.status));
+  if (isLoading || open.length === 0) return null;
+  const billed = open.reduce((s, j) => s + Number(j.billed ?? 0), 0);
+  const left = open.reduce((s, j) => {
+    const l = leftToBill(j.contract_amount, j.billed);
+    return s + (l !== null && l > 0 ? l : 0);
+  }, 0);
+  const anyContract = open.some((j) => Number(j.contract_amount) > 0);
 
   return (
-    <section className="space-y-4">
-      <h2 className="text-base font-semibold text-slate-900">Projects</h2>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Stat label="Active jobs" value={String(activeJobs)} sub={`${jobStats.reduce((s, j) => s + Number(j['count'] ?? 0), 0)} total`} to="/jobs" />
-        <Stat label="Contract value" value={formatCurrency(totalValue, { short: true })} sub="All jobs" />
-        <Stat label="Hours (30 days)" value={String(dash?.time_last_30d?.hours ?? 0)} sub={`${dash?.time_last_30d?.ot_hours ?? 0} overtime`} />
-      </div>
-      <div className="card">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-          <h3>Active jobs</h3>
-          <Link to="/jobs" className="text-sm text-brand-600 hover:text-brand-700 flex items-center gap-1">
-            View all <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
+    <section className="card">
+      <div className="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-slate-900">Open jobs</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {formatCurrency(billed)} billed{anyContract ? ` · ${formatCurrency(left)} left to bill` : ''}
+          </p>
         </div>
-        <div className="divide-y divide-slate-100">
-          {jobs.length === 0 && (
-            <div className="px-5 py-8 text-center text-slate-500">
-              <FolderKanban className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-              <p className="text-sm">No active jobs</p>
-              <Link to="/jobs/new" className="btn-primary btn-sm mt-3 inline-flex">Create job</Link>
-            </div>
-          )}
-          {jobs.map((job) => (
-            <Link key={job.id} to={`/jobs/${job.id}`} className="flex items-center px-5 py-3.5 hover:bg-slate-50 transition-colors">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-900 truncate">{job.name}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{job.job_number} · {job.customer_name ?? 'No customer'}</p>
-              </div>
-              <div className="text-right ml-4 flex-shrink-0">
-                <p className="text-sm font-medium text-slate-900">{formatCurrency(job.contract_amount, { short: true })}</p>
-                <span className={statusColor[job.status] ?? 'badge-gray'}>{job.status.replace('_', ' ')}</span>
-              </div>
-            </Link>
-          ))}
-        </div>
+        <Link to="/jobs" className="text-sm text-brand-600 hover:text-brand-700 flex items-center gap-1 flex-shrink-0">
+          All jobs <ArrowRight className="w-3.5 h-3.5" />
+        </Link>
       </div>
-      <p className="text-xs text-slate-400">Project tools are on. You can turn them off in Settings.</p>
+      <ul className="divide-y divide-slate-100">
+        {open.slice(0, 5).map((job) => {
+          const pct = billedPct(job.contract_amount, job.billed);
+          return (
+            <li key={job.id}>
+              <Link to={`/jobs/${job.id}`} className="block px-5 py-3.5 hover:bg-slate-50 transition-colors">
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="text-sm font-medium text-slate-900 truncate">{job.name}</p>
+                  <p className="text-sm text-slate-700 tabular-nums flex-shrink-0">
+                    {formatCurrency(job.billed ?? 0)}
+                    {Number(job.contract_amount) > 0 && (
+                      <span className="text-slate-400"> of {formatCurrency(job.contract_amount, { short: true })}</span>
+                    )}
+                  </p>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5 truncate">
+                  {job.job_number}{job.customer_name ? ` · ${job.customer_name}` : ''}
+                </p>
+                {pct !== null && (
+                  <div className="mt-2 h-1.5 bg-slate-100 rounded-full overflow-hidden" aria-label={`${pct}% of the contract billed`}>
+                    <div className="h-full bg-brand-600 rounded-full" style={{ width: `${pct}%` }} />
+                  </div>
+                )}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }
