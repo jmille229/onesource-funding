@@ -10,11 +10,17 @@ import { formatCurrency, formatDate, todayISO } from '../../lib/api';
  * The advance ledger, as a table: every advance with its dates, amounts,
  * payment and reserve, filterable, sortable, totalled and downloadable.
  * Used for the whole book (Advances tab) and for one client's history.
+ *
+ * The first columns follow One Source's Advance Book: Borrower, Name,
+ * Creditor, Sales person, Project, Adv date, Invoice #, Total invoice,
+ * Total advanced.
  */
 
 export interface AdvanceRow {
   id: string; company_id: string; company_name: string; invoice_number: string | null;
   debtor_name: string; job_number: string | null; job_name: string | null;
+  /** V023: the Advance Book's Name, Sales person and Project. */
+  contact_name: string | null; sales_person: string | null; project: string | null;
   face_amount: string; advance_rate_pct: string; advance_amount: string; reserve_amount: string;
   accrued_fee: string; status: string;
   advanced_on: string | null; invoice_due_on: string | null; collected_on: string | null; closed_on: string | null;
@@ -24,6 +30,17 @@ export interface AdvanceRow {
   /** V016: short payment by the agency, the reserve due back (reserve − fees − shortfall), and any balance the client owes. */
   shortfall: string; net_reserve: string; client_owes: string;
 }
+
+/** The book (or one client's part of it). Shared with the fund form, which suggests names from it. */
+export const advancesQuery = (companyId?: string) => ({
+  queryKey: ['admin-invoices', companyId ?? 'all'],
+  queryFn: (): Promise<AdvanceRow[]> =>
+    adminApi.get(`/invoices${companyId ? `?company_id=${companyId}` : ''}`).then((r) => r.data.data),
+});
+
+/** Distinct, non-blank values, sorted — for suggestion lists and filters. */
+export const distinct = (values: (string | null | undefined)[]) =>
+  [...new Set(values.map((v) => v?.trim()).filter((v): v is string => Boolean(v)))].sort((a, b) => a.localeCompare(b));
 
 const STATUS: Record<string, { label: string; badge: string }> = {
   pending: { label: 'Pending', badge: 'badge-gray' },
@@ -41,67 +58,74 @@ const num = (v: string | number | null | undefined) => (v === null || v === unde
 /** "Check #1234" → "1234"; anything else is shown as written. */
 const checkRef = (memo: string | null) => (memo ? memo.replace(/^check\s*#\s*/i, '') : '');
 const jobLabel = (r: AdvanceRow) => [r.job_number, r.job_name && r.job_name !== r.job_number ? r.job_name : null].filter(Boolean).join(' · ');
+/** The Project typed for the advance, or else the job it was funded against (requests from the app). */
+const projectLabel = (r: AdvanceRow) => r.project ?? jobLabel(r);
+/** "80.0000" → "80%", "79.9998" → "80%" (an overridden advance's effective rate, rounded for show). */
+const pct = (v: string) => `${Math.round(Number(v) * 10) / 10}%`;
 const daysToRecourse = (r: AdvanceRow) => {
   if (r.status !== 'advanced' || !r.recourse_on) return null;
   return Math.round((Date.parse(day(r.recourse_on)) - Date.parse(todayISO())) / 86400000);
 };
 
-type SortKey = 'company_name' | 'invoice' | 'debtor_name' | 'job' | 'advanced_on' | 'invoice_due_on' | 'face_amount'
-  | 'advance_amount' | 'accrued_fee' | 'collected_on' | 'amount_received' | 'days_outstanding' | 'closed_on' | 'status';
+type SortKey = 'company_name' | 'contact_name' | 'debtor_name' | 'sales_person' | 'project' | 'advanced_on' | 'invoice'
+  | 'face_amount' | 'advance_amount' | 'invoice_due_on' | 'accrued_fee' | 'collected_on' | 'amount_received'
+  | 'days_outstanding' | 'closed_on' | 'status';
 
 const sortValue = (r: AdvanceRow, k: SortKey): string | number => {
   switch (k) {
     case 'invoice': return factoredInvoiceRef({ id: r.id, invoice_number: r.invoice_number }).toLowerCase();
-    case 'job': return jobLabel(r).toLowerCase();
+    case 'project': return projectLabel(r).toLowerCase();
     case 'face_amount': case 'advance_amount': case 'accrued_fee': case 'amount_received': return num(r[k]);
     case 'days_outstanding': return r.days_outstanding ?? -1;
-    case 'company_name': case 'debtor_name': case 'status': return String(r[k] ?? '').toLowerCase();
+    case 'company_name': case 'contact_name': case 'debtor_name': case 'sales_person': case 'status':
+      return String(r[k] ?? '').toLowerCase();
     default: return day(r[k]);
   }
 };
 
 export function AdvancesTable({ companyId, hideClient = false }: { companyId?: string; hideClient?: boolean }) {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery<AdvanceRow[]>({
-    queryKey: ['admin-invoices', companyId ?? 'all'],
-    queryFn: () => adminApi.get(`/invoices${companyId ? `?company_id=${companyId}` : ''}`).then((r) => r.data.data),
-  });
+  const { data, isLoading } = useQuery(advancesQuery(companyId));
   const rows = data ?? [];
 
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
   const [client, setClient] = useState('');
   const [agency, setAgency] = useState('');
+  const [sales, setSales] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'advanced_on', dir: -1 });
-  const [acting, setActing] = useState<{ id: string; kind: 'collect' | 'close' } | null>(null);
+  const [acting, setActing] = useState<{ id: string; kind: 'collect' | 'close' | 'details' } | null>(null);
 
-  const clients = useMemo(() => [...new Set(rows.map((r) => r.company_name))].sort(), [rows]);
-  const agencies = useMemo(() => [...new Set(rows.map((r) => r.debtor_name))].sort(), [rows]);
+  const clients = useMemo(() => distinct(rows.map((r) => r.company_name)), [rows]);
+  const agencies = useMemo(() => distinct(rows.map((r) => r.debtor_name)), [rows]);
+  const salesPeople = useMemo(() => distinct(rows.map((r) => r.sales_person)), [rows]);
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const out = rows.filter((r) =>
       (!status || r.status === status)
       && (!client || r.company_name === client)
       && (!agency || r.debtor_name === agency)
+      && (!sales || r.sales_person?.trim() === sales)
       && (!from || day(r.advanced_on) >= from)
       && (!to || (day(r.advanced_on) && day(r.advanced_on) <= to))
-      && (!needle || [factoredInvoiceRef({ id: r.id, invoice_number: r.invoice_number }), r.company_name, r.debtor_name,
-                      jobLabel(r), r.payment_memo ?? '', r.notes ?? ''].some((s) => s.toLowerCase().includes(needle))));
+      && (!needle || [factoredInvoiceRef({ id: r.id, invoice_number: r.invoice_number }), r.company_name, r.contact_name ?? '',
+                      r.debtor_name, r.sales_person ?? '', projectLabel(r), r.payment_memo ?? '', r.notes ?? '']
+        .some((s) => s.toLowerCase().includes(needle))));
     return out.sort((a, b) => {
       const x = sortValue(a, sort.key), y = sortValue(b, sort.key);
       return (x < y ? -1 : x > y ? 1 : 0) * sort.dir;
     });
-  }, [rows, q, status, client, agency, from, to, sort]);
+  }, [rows, q, status, client, agency, sales, from, to, sort]);
 
   const totals = useMemo(() => filtered.reduce((t, r) => ({
     face: t.face + num(r.face_amount), advance: t.advance + num(r.advance_amount), fees: t.fees + num(r.accrued_fee),
     received: t.received + num(r.amount_received), released: t.released + num(r.reserve_released),
   }), { face: 0, advance: 0, fees: 0, received: 0, released: 0 }), [filtered]);
 
-  const filtering = Boolean(q || status || client || agency || from || to);
-  const clear = () => { setQ(''); setStatus(''); setClient(''); setAgency(''); setFrom(''); setTo(''); };
+  const filtering = Boolean(q || status || client || agency || sales || from || to);
+  const clear = () => { setQ(''); setStatus(''); setClient(''); setAgency(''); setSales(''); setFrom(''); setTo(''); };
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['admin-invoices'] });
     qc.invalidateQueries({ queryKey: ['admin-clients'] });
@@ -117,14 +141,15 @@ export function AdvancesTable({ companyId, hideClient = false }: { companyId?: s
       </button>
     </th>
   );
-  const colCount = hideClient ? 15 : 16;
+  // Every column, the actions one included: 19, or 18 in one client's history (no Borrower).
+  const totalCols = hideClient ? 18 : 19;
 
   return (
     <div className="space-y-3">
       <div className="card p-3 flex flex-col lg:flex-row lg:flex-wrap lg:items-end gap-2">
         <div className="relative flex-1 min-w-[14rem]">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden />
-          <input className="input pl-9" placeholder="Search invoice #, client, agency, check #, notes" value={q}
+          <input className="input pl-9" placeholder="Search borrower, name, creditor, project, invoice #, check #, notes" value={q}
                  onChange={(e) => setQ(e.target.value)} aria-label="Search advances" />
         </div>
         <select className="input lg:w-48" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
@@ -132,15 +157,21 @@ export function AdvancesTable({ companyId, hideClient = false }: { companyId?: s
           {Object.entries(STATUS).map(([v, s]) => <option key={v} value={v}>{s.label}</option>)}
         </select>
         {!hideClient && (
-          <select className="input lg:w-56" value={client} onChange={(e) => setClient(e.target.value)} aria-label="Client">
-            <option value="">All clients</option>
+          <select className="input lg:w-56" value={client} onChange={(e) => setClient(e.target.value)} aria-label="Borrower">
+            <option value="">All borrowers</option>
             {clients.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         )}
-        <select className="input lg:w-56" value={agency} onChange={(e) => setAgency(e.target.value)} aria-label="Agency">
-          <option value="">All agencies</option>
+        <select className="input lg:w-56" value={agency} onChange={(e) => setAgency(e.target.value)} aria-label="Creditor">
+          <option value="">All creditors</option>
           {agencies.map((a) => <option key={a} value={a}>{a}</option>)}
         </select>
+        {salesPeople.length > 0 && (
+          <select className="input lg:w-44" value={sales} onChange={(e) => setSales(e.target.value)} aria-label="Sales person">
+            <option value="">All sales people</option>
+            {salesPeople.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        )}
         <div className="flex items-end gap-2">
           <label className="text-xs text-slate-500">Advanced from
             <input type="date" className="input mt-0.5" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -163,18 +194,21 @@ export function AdvancesTable({ companyId, hideClient = false }: { companyId?: s
         {' · '}Click a column heading to sort.
       </p>
 
-      <div className="card overflow-x-auto">
-        <table className="w-full min-w-[96rem] text-sm">
+      {/* relative: keeps the screen-reader-only header text inside the scroller, not widening the page */}
+      <div className="card overflow-x-auto relative">
+        <table className="w-full min-w-[112rem] text-sm">
           <thead className="border-b border-slate-200">
             <tr className="bg-slate-50">
-              {header('invoice', 'Invoice #', false, true)}
-              {!hideClient && header('company_name', 'Client')}
-              {header('debtor_name', 'Agency')}
-              {header('job', 'Job / contract')}
-              {header('advanced_on', 'Advanced')}
+              {hideClient ? header('invoice', 'Invoice #', false, true) : header('company_name', 'Borrower', false, true)}
+              {header('contact_name', 'Name')}
+              {header('debtor_name', 'Creditor')}
+              {header('sales_person', 'Sales person')}
+              {header('project', 'Project')}
+              {header('advanced_on', 'Adv date')}
+              {!hideClient && header('invoice', 'Invoice #')}
+              {header('face_amount', 'Total invoice', true)}
+              {header('advance_amount', 'Total advanced', true)}
               {header('invoice_due_on', 'Due')}
-              {header('face_amount', 'Invoice amt', true)}
-              {header('advance_amount', 'Advance', true)}
               {header('accrued_fee', 'Fees', true)}
               {header('collected_on', 'Paid on')}
               {header('amount_received', 'Received', true)}
@@ -187,38 +221,48 @@ export function AdvancesTable({ companyId, hideClient = false }: { companyId?: s
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {isLoading && <tr><td colSpan={colCount + 1} className="px-4 py-8 text-center text-slate-500">Loading…</td></tr>}
+            {isLoading && <tr><td colSpan={totalCols} className="px-4 py-8 text-center text-slate-500">Loading…</td></tr>}
             {!isLoading && filtered.length === 0 && (
-              <tr><td colSpan={colCount + 1} className="px-4 py-12 text-center text-slate-500">
+              <tr><td colSpan={totalCols} className="px-4 py-12 text-center text-slate-500">
                 {rows.length ? 'No advances match these filters' : 'No advances yet'}
               </td></tr>
             )}
             {filtered.map((r) => {
               const toRecourse = daysToRecourse(r);
               const short = r.amount_received !== null && num(r.amount_received) < num(r.face_amount) - 0.005;
+              const ref = factoredInvoiceRef({ id: r.id, invoice_number: r.invoice_number });
+              const project = projectLabel(r);
+              const none = <span className="text-slate-300">—</span>;
               return (
                 <Fragment key={r.id}>
                   <tr className="bg-white hover:bg-slate-50 align-top">
-                    <td className={`table-cell font-mono font-medium ${PINNED}`}>{factoredInvoiceRef({ id: r.id, invoice_number: r.invoice_number })}</td>
-                    {!hideClient && <td className="table-cell">{r.company_name}</td>}
+                    {hideClient
+                      ? <td className={`table-cell font-mono font-medium ${PINNED}`}>{ref}</td>
+                      : <td className={`table-cell font-medium max-w-[14rem] truncate ${PINNED}`} title={r.company_name}>{r.company_name}</td>}
+                    <td className="table-cell">{r.contact_name ?? none}</td>
                     <td className="table-cell">{r.debtor_name}</td>
-                    <td className="table-cell text-slate-600 max-w-[12rem] truncate" title={jobLabel(r) || undefined}>
-                      {r.job_number ?? r.job_name ?? <span className="text-slate-300">—</span>}
+                    <td className="table-cell">{r.sales_person ?? none}</td>
+                    <td className="table-cell text-slate-600 max-w-[16rem] truncate" title={project || undefined}>
+                      {project || none}
                     </td>
                     <td className="table-cell tabular-nums">{r.advanced_on ? formatDate(r.advanced_on) : '—'}</td>
-                    <td className="table-cell tabular-nums text-slate-600">{r.invoice_due_on ? formatDate(r.invoice_due_on) : '—'}</td>
+                    {!hideClient && <td className="table-cell font-mono">{ref}</td>}
                     <td className="table-cell text-right tabular-nums">{formatCurrency(r.face_amount)}</td>
-                    <td className="table-cell text-right tabular-nums">{formatCurrency(r.advance_amount)}</td>
+                    <td className="table-cell text-right tabular-nums">
+                      {formatCurrency(r.advance_amount)}
+                      <span className="block text-[11px] text-slate-400">{pct(r.advance_rate_pct)}</span>
+                    </td>
+                    <td className="table-cell tabular-nums text-slate-600">{r.invoice_due_on ? formatDate(r.invoice_due_on) : '—'}</td>
                     <td className="table-cell text-right tabular-nums">
                       {formatCurrency(r.accrued_fee)}
                       {r.status === 'advanced' && <span className="block text-[11px] text-slate-400">accruing</span>}
                     </td>
-                    <td className="table-cell tabular-nums">{r.collected_on ? formatDate(r.collected_on) : <span className="text-slate-300">—</span>}</td>
+                    <td className="table-cell tabular-nums">{r.collected_on ? formatDate(r.collected_on) : none}</td>
                     <td className="table-cell text-right tabular-nums">
-                      {r.amount_received !== null ? formatCurrency(r.amount_received) : <span className="text-slate-300">—</span>}
+                      {r.amount_received !== null ? formatCurrency(r.amount_received) : none}
                       {short && <span className="block text-[11px] text-orange-600">short {formatCurrency(num(r.face_amount) - num(r.amount_received))}</span>}
                     </td>
-                    <td className="table-cell font-mono text-slate-600">{checkRef(r.payment_memo) || <span className="text-slate-300">—</span>}</td>
+                    <td className="table-cell font-mono text-slate-600">{checkRef(r.payment_memo) || none}</td>
                     <td className="table-cell text-right tabular-nums">
                       {r.days_outstanding ?? '—'}
                       {toRecourse !== null && toRecourse <= 14 && (
@@ -238,7 +282,7 @@ export function AdvancesTable({ companyId, hideClient = false }: { companyId?: s
                           {formatCurrency(r.net_reserve)} due to client
                           {num(r.client_owes) > 0 && <span className="block text-red-600">client owes {formatCurrency(r.client_owes)}</span>}
                         </span>
-                      ) : <span className="text-slate-300">—</span>}
+                      ) : none}
                     </td>
                     <td className="table-cell">
                       <span className={STATUS[r.status]?.badge ?? 'badge-gray'}>{STATUS[r.status]?.label ?? r.status}</span>
@@ -247,26 +291,33 @@ export function AdvancesTable({ companyId, hideClient = false }: { companyId?: s
                       )}
                     </td>
                     <td className="table-cell-wrap text-slate-600 max-w-[16rem]">
-                      {r.notes ? <span className="line-clamp-2" title={r.notes}>{r.notes}</span> : <span className="text-slate-300">—</span>}
+                      {r.notes ? <span className="line-clamp-2" title={r.notes}>{r.notes}</span> : none}
                     </td>
                     <td className="table-cell text-right">
-                      {r.status === 'advanced' && (
-                        <button className="btn-secondary btn-sm" onClick={() => setActing({ id: r.id, kind: 'collect' })}>Mark paid</button>
-                      )}
-                      {r.status === 'collected' && (
-                        <button className="btn-secondary btn-sm" onClick={() => setActing({ id: r.id, kind: 'close' })}>Release reserve</button>
-                      )}
+                      <div className="flex justify-end gap-1.5">
+                        {r.status === 'advanced' && (
+                          <button className="btn-secondary btn-sm" onClick={() => setActing({ id: r.id, kind: 'collect' })}>Mark paid</button>
+                        )}
+                        {r.status === 'collected' && (
+                          <button className="btn-secondary btn-sm" onClick={() => setActing({ id: r.id, kind: 'close' })}>Release reserve</button>
+                        )}
+                        <button className="btn-ghost btn-sm" onClick={() => setActing({ id: r.id, kind: 'details' })}
+                                aria-label={`Edit name, sales person and project for ${ref}`}>Edit</button>
+                      </div>
                     </td>
                   </tr>
                   {acting?.id === r.id && (
                     <tr className="bg-slate-50">
-                      <td colSpan={colCount + 1} className="px-4 py-3">
+                      <td colSpan={totalCols} className="px-4 py-3">
                         {/* Pinned to the visible part of the table, so the buttons
                             aren't off to the right when the table is wide. */}
                         <div className="sticky left-4 w-[min(60rem,calc(100vw-6rem))]">
                           {acting.kind === 'collect'
                             ? <CollectForm row={r} onDone={() => { setActing(null); refresh(); }} onCancel={() => setActing(null)} />
-                            : <CloseForm row={r} onDone={() => { setActing(null); refresh(); }} onCancel={() => setActing(null)} />}
+                            : acting.kind === 'close'
+                              ? <CloseForm row={r} onDone={() => { setActing(null); refresh(); }} onCancel={() => setActing(null)} />
+                              : <DetailsForm row={r} salesPeople={salesPeople}
+                                             onDone={() => { setActing(null); refresh(); }} onCancel={() => setActing(null)} />}
                         </div>
                       </td>
                     </tr>
@@ -279,11 +330,12 @@ export function AdvancesTable({ companyId, hideClient = false }: { companyId?: s
             <tfoot className="border-t-2 border-slate-200 font-semibold">
               <tr className="bg-slate-50">
                 <td className={`table-cell ${PINNED}`}>Total</td>
-                <td className="table-cell font-normal text-slate-600" colSpan={hideClient ? 4 : 5}>
+                <td className="table-cell font-normal text-slate-600" colSpan={hideClient ? 5 : 6}>
                   {filtered.length} advance{filtered.length === 1 ? '' : 's'}{filtering ? ' (filtered)' : ''}
                 </td>
                 <td className="table-cell text-right tabular-nums">{formatCurrency(totals.face)}</td>
                 <td className="table-cell text-right tabular-nums">{formatCurrency(totals.advance)}</td>
+                <td className="table-cell" />
                 <td className="table-cell text-right tabular-nums">{formatCurrency(totals.fees)}</td>
                 <td className="table-cell" />
                 <td className="table-cell text-right tabular-nums">{formatCurrency(totals.received)}</td>
@@ -301,6 +353,42 @@ export function AdvancesTable({ companyId, hideClient = false }: { companyId?: s
 
 type ErrorLike = { response?: { data?: { message?: string } } };
 const errMsg = (e: unknown, fallback: string) => (e as ErrorLike).response?.data?.message ?? fallback;
+
+/** Name, Sales person and Project — descriptive, so they can be corrected at any time. */
+function DetailsForm({ row, salesPeople, onDone, onCancel }: {
+  row: AdvanceRow; salesPeople: string[]; onDone: () => void; onCancel: () => void;
+}) {
+  const [name, setName] = useState(row.contact_name ?? '');
+  const [sales, setSales] = useState(row.sales_person ?? '');
+  const [project, setProject] = useState(row.project ?? '');
+  const save = useMutation({
+    mutationFn: () => adminApi.patch(`/invoices/${row.id}/details`, {
+      contact_name: name.trim() || null, sales_person: sales.trim() || null, project: project.trim() || null,
+    }),
+    onSuccess: () => { toast.success('Saved'); onDone(); },
+    onError: (e) => toast.error(errMsg(e, 'Couldn’t save')),
+  });
+  const listId = `sales-${row.id}`;
+  return (
+    <form className="flex flex-col md:flex-row md:items-end gap-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+      <label className="text-xs text-slate-600">Name
+        <input className="input mt-0.5 w-52" value={name} onChange={(e) => setName(e.target.value)} maxLength={200} autoFocus />
+      </label>
+      <label className="text-xs text-slate-600">Sales person
+        <input className="input mt-0.5 w-40" value={sales} onChange={(e) => setSales(e.target.value)} maxLength={100} list={listId} />
+        <datalist id={listId}>{salesPeople.map((p) => <option key={p} value={p} />)}</datalist>
+      </label>
+      <label className="text-xs text-slate-600 flex-1 min-w-[16rem]">Project
+        <input className="input mt-0.5" value={project} onChange={(e) => setProject(e.target.value)} maxLength={300}
+               placeholder={row.project ? undefined : (jobLabel(row) || 'e.g. 241 N. 10th St. — housing')} />
+      </label>
+      <div className="flex gap-2">
+        <button className="btn-primary btn-sm" disabled={save.isPending}>{save.isPending && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
+        <button type="button" className="btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
+}
 
 /** Record the agency's payment: when, how much, and the check or reference. */
 function CollectForm({ row, onDone, onCancel }: { row: AdvanceRow; onDone: () => void; onCancel: () => void }) {
@@ -412,22 +500,26 @@ function CloseForm({ row, onDone, onCancel }: { row: AdvanceRow; onDone: () => v
 // ─── CSV ──────────────────────────────────────────────────────────────────────
 
 function downloadCsv(rows: AdvanceRow[], clientName?: string) {
+  // The Advance Book's own headings where it has them.
   const cols: [string, (r: AdvanceRow) => string | number][] = [
-    ['Client', (r) => r.company_name],
+    ['Borrower', (r) => r.company_name],
+    ['Name', (r) => r.contact_name ?? ''],
+    ['Creditor', (r) => r.debtor_name],
+    ['Sales person', (r) => r.sales_person ?? ''],
+    ['Project', (r) => r.project ?? ''],
+    ['Adv Date', (r) => day(r.advanced_on)],
     ['Invoice #', (r) => factoredInvoiceRef({ id: r.id, invoice_number: r.invoice_number })],
-    ['Agency', (r) => r.debtor_name],
+    ['Total Invoice', (r) => num(r.face_amount).toFixed(2)],
+    ['Total Advanced', (r) => num(r.advance_amount).toFixed(2)],
+    ['Advance rate %', (r) => num(r.advance_rate_pct)],
+    ['Reserve', (r) => num(r.reserve_amount).toFixed(2)],
     ['Job #', (r) => r.job_number ?? ''],
     ['Job name', (r) => r.job_name ?? ''],
-    ['Advance date', (r) => day(r.advanced_on)],
     ['Due date', (r) => day(r.invoice_due_on)],
-    ['Invoice amount', (r) => num(r.face_amount).toFixed(2)],
-    ['Advance rate %', (r) => num(r.advance_rate_pct)],
-    ['Advance', (r) => num(r.advance_amount).toFixed(2)],
-    ['Reserve', (r) => num(r.reserve_amount).toFixed(2)],
     ['Fees', (r) => num(r.accrued_fee).toFixed(2)],
-    ['Paid on', (r) => day(r.collected_on)],
-    ['Amount received', (r) => (r.amount_received === null ? '' : num(r.amount_received).toFixed(2))],
-    ['Check # / reference', (r) => checkRef(r.payment_memo)],
+    ['Date Paid Back', (r) => day(r.collected_on)],
+    ['Amount Received', (r) => (r.amount_received === null ? '' : num(r.amount_received).toFixed(2))],
+    ['Check #', (r) => checkRef(r.payment_memo)],
     ['Days outstanding', (r) => r.days_outstanding ?? ''],
     ['Recourse date', (r) => day(r.recourse_on)],
     ['Reserve released on', (r) => day(r.closed_on)],

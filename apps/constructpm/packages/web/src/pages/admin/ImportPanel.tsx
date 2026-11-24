@@ -13,6 +13,7 @@ import { formatCurrency, formatDate } from '../../lib/api';
 // instead of adding a duplicate, so the same workbook can be re-imported after
 // it's edited. The preview shows exactly what each row will do before anything
 // is written. Fees, Days and APR are ignored — the fee schedule computes those.
+// Name, Sales person, Project and Total Advanced land in their own fields.
 
 interface PreviewItem {
   row: number; action: 'create' | 'update' | 'unchanged';
@@ -105,11 +106,13 @@ export function ImportPanel() {
             if the date and amount agree. Rows without an invoice # match on advance date, amount and agency.
             Client and agency names match despite punctuation or “LLC / Inc.” differences.</p>
           <p><strong>Updates overwrite</strong> the advance with what the sheet says — invoice #, agency, amount,
-            advance date, notes, and the payment (date paid, amount received, check #). <strong>A blank cell never
+            total advanced, advance date, name, sales person, project, notes, and the payment (date paid, amount
+            received, check #). <strong>A blank cell never
             erases</strong> anything already recorded, e.g. a payment entered in the console.</p>
           <p><strong>Refused, not guessed:</strong> a row that could be either of two advances, two rows for the same
             advance, or a Borrower that isn’t a set-up client.</p>
           <p><strong>Required per row:</strong> Borrower, Creditor, Total Invoice, Adv Date (Invoice # strongly recommended).
+            {' '}<strong>Total Advanced</strong> is what was advanced; leave it blank and the client’s advance rate sets it.
             <strong> Ignored on purpose:</strong> Fees, Bal Due, Days, #Years, APR — the fee schedule computes those.</p>
           <p className="pt-1"><code className="text-[11px] break-all">{ADVANCE_BOOK_HEADER}</code></p>
         </div>

@@ -209,7 +209,10 @@ adminRouter.get('/clients', asyncHandler(async (_req, res) => {
            fc.tax_lien_personal, fc.tax_lien_business, fc.judgement, fc.lawsuit,
            fc.existing_ucc, fc.ucc_is_prior_factor, fc.personal_guarantee,
            fc.uses_subs, fc.does_progress_billing, fc.negative_list, fc.negative_list_reason,
-           fc.notes, fs.name AS fee_schedule_name,
+           fc.notes, fs.name AS fee_schedule_name, fs.advance_rate_pct,
+           -- The fund form's default for "Name" on a client's first advance.
+           (SELECT NULLIF(trim(concat_ws(' ', o.first_name, o.last_name)), '')
+              FROM admin_client_logins(fc.company_id) o WHERE o.role = 'owner' LIMIT 1) AS owner_name,
            -- Who can sign in: how many logins, and how many haven't set a password.
            MAX(l.total) AS login_count, MAX(l.pending) AS login_pending,
            COALESCE(SUM(fi.advance_amount) FILTER (WHERE fi.status='advanced'),0) AS advanced_outstanding,
@@ -231,7 +234,7 @@ adminRouter.get('/clients', asyncHandler(async (_req, res) => {
       CROSS JOIN LATERAL (
         SELECT on_time_days FROM underwriting_policy ORDER BY version DESC LIMIT 1) p
       LEFT JOIN factored_invoices fi ON fi.factoring_client_id = fc.id
-     GROUP BY fc.id, c.name, fs.name, p.on_time_days
+     GROUP BY fc.id, c.name, fs.name, fs.advance_rate_pct, p.on_time_days
      ORDER BY c.name`);
   res.json({ data: r.rows });
 }));
@@ -484,6 +487,14 @@ adminRouter.get('/invoices', asyncHandler(async (req, res) => {
   res.json({ data: r.rows });
 }));
 
+/**
+ * A free-text detail from the Advance Book (V023): trimmed, and blank means
+ * none. Left out entirely (undefined) is different from blank (null) — see
+ * fundInvoice.
+ */
+const advanceDetail = (max: number) => z.string().trim().max(max).nullable().optional()
+  .transform((v) => (v === undefined ? undefined : v || null));
+
 const fundSchema = z.object({
   company_id: z.string().uuid(),
   debtor_id: z.string().uuid(),
@@ -493,8 +504,14 @@ const fundSchema = z.object({
   // — the two cases are treated differently on purpose.
   invoice_number: z.string().trim().max(60).nullable().optional(),
   face_amount: z.number().positive(),
+  // What was actually advanced ("Total Advanced"). Optional: without it the
+  // schedule's advance rate sets it, as before.
+  advance_amount: z.number().positive().nullable().optional(),
   advanced_on: z.string(),
   invoice_due_on: z.string().nullable().optional(),
+  contact_name: advanceDetail(200),
+  sales_person: advanceDetail(100),
+  project: advanceDetail(300),
   // Optional override; otherwise the client's default schedule applies.
   fee_schedule_id: z.string().uuid().nullable().optional(),
   invoice_id: z.string().uuid().nullable().optional(),
@@ -503,10 +520,16 @@ const fundSchema = z.object({
 });
 
 /**
- * Funds an invoice. The advance/reserve split is computed from the schedule's
- * advance rate rather than accepted from the caller, and the rate and recourse
- * period are snapshotted onto the row — editing a schedule later must not
- * rewrite the economics of money already advanced.
+ * Funds an invoice. The advance/reserve split comes from the schedule's
+ * advance rate unless the operator says what was actually advanced, and the
+ * rate (the effective one, when overridden) and recourse period are
+ * snapshotted onto the row — editing a schedule later must not rewrite the
+ * economics of money already advanced. Fees are on the invoice amount, so an
+ * overridden advance changes the split, not the fees.
+ *
+ * Name and Sales person left out (undefined) carry over from the client's
+ * most recent advance that has them — a request approved from the queue gets
+ * the client's usual contact and salesperson. Blank (null) means none.
  */
 async function fundInvoice(
   c: import('pg').PoolClient,
@@ -537,21 +560,41 @@ async function fundInvoice(
     `SELECT legal_name FROM factoring_debtors WHERE id = $1`, [b.debtor_id]);
   if (!debtor.rows[0]) throw Object.assign(new Error('debtor not found'), { status: 422 });
 
-  const rate = Number(sched.rows[0].advance_rate_pct);
-  const advance = Math.round(b.face_amount * rate) / 100;
+  let rate = Number(sched.rows[0].advance_rate_pct);
+  let advance = Math.round(b.face_amount * rate) / 100;
+  if (b.advance_amount !== null && b.advance_amount !== undefined) {
+    advance = Math.round(b.advance_amount * 100) / 100;
+    if (advance > b.face_amount) {
+      throw Object.assign(new Error('The amount advanced can’t be more than the invoice'), { status: 422 });
+    }
+    rate = Math.round((advance / b.face_amount) * 1_000_000) / 10_000;   // NUMERIC(7,4)
+  }
   const reserve = Math.round((b.face_amount - advance) * 100) / 100;
+
+  let contactName = b.contact_name;
+  let salesPerson = b.sales_person;
+  if (contactName === undefined || salesPerson === undefined) {
+    const last = await c.query<{ contact_name: string | null; sales_person: string | null }>(
+      `SELECT (SELECT contact_name FROM factored_invoices WHERE company_id = $1 AND contact_name IS NOT NULL
+                ORDER BY advanced_on DESC NULLS LAST, created_at DESC LIMIT 1) AS contact_name,
+              (SELECT sales_person FROM factored_invoices WHERE company_id = $1 AND sales_person IS NOT NULL
+                ORDER BY advanced_on DESC NULLS LAST, created_at DESC LIMIT 1) AS sales_person`,
+      [b.company_id]);
+    if (contactName === undefined) contactName = last.rows[0]?.contact_name ?? null;
+    if (salesPerson === undefined) salesPerson = last.rows[0]?.sales_person ?? null;
+  }
 
   const r = await c.query(
     `INSERT INTO factored_invoices
        (company_id,factoring_client_id,debtor_id,debtor_name,invoice_id,job_id,invoice_number,
         face_amount,fee_schedule_id,advance_rate_pct,recourse_days,advance_amount,reserve_amount,
-        status,advanced_on,invoice_due_on,notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'advanced',$14,$15,$16)
+        status,advanced_on,invoice_due_on,notes,contact_name,sales_person,project)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'advanced',$14,$15,$16,$17,$18,$19)
      RETURNING *`,
     [b.company_id, client.rows[0].id, b.debtor_id, debtor.rows[0].legal_name,
      b.invoice_id ?? null, b.job_id ?? null, b.invoice_number ?? null, b.face_amount, scheduleId,
      rate, sched.rows[0].recourse_days, advance, reserve, b.advanced_on, b.invoice_due_on ?? null,
-     b.notes ?? null]);
+     b.notes ?? null, contactName ?? null, salesPerson ?? null, b.project ?? null]);
 
   await c.query(
     `INSERT INTO factoring_events (company_id,factored_invoice_id,event_type,amount,occurred_on,memo)
@@ -571,6 +614,35 @@ adminRouter.post('/invoices', validate(fundSchema), asyncHandler(async (req, res
     fundInvoice(c, req.body as z.infer<typeof fundSchema>, req.platform.userId, req.ip ?? null));
   res.status(201).json({ data: row });
 }));
+
+/** Name, Sales person and Project on an advance (V023): descriptive, so editable at any status. */
+adminRouter.patch(
+  '/invoices/:id/details',
+  validate(z.object({
+    contact_name: advanceDetail(200),
+    sales_person: advanceDetail(100),
+    project: advanceDetail(300),
+  })),
+  asyncHandler(async (req, res) => {
+    const set = buildUpdateSet(req.body as Record<string, unknown>, ['contact_name', 'sales_person', 'project']);
+    if (!set.clause) { res.status(400).json({ error: 'no_fields', message: 'Nothing to update' }); return; }
+    const out = await withAdminTransaction(async (c) => {
+      const before = await c.query(`SELECT * FROM factored_invoices WHERE id = $1 FOR UPDATE`, [req.params['id']]);
+      if (!before.rows[0]) throw Object.assign(new Error('advance not found'), { status: 404 });
+      const r = await c.query(
+        `UPDATE factored_invoices SET ${set.clause}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+        [req.params['id'], ...set.values]);
+      await audit(c, {
+        platformUserId: req.platform.userId, action: 'edit_advance_details',
+        entityType: 'factored_invoice', entityId: String(req.params['id']),
+        companyId: String(before.rows[0]['company_id']),
+        before: before.rows[0], after: r.rows[0], ip: req.ip ?? null,
+      });
+      return r.rows[0];
+    });
+    res.json({ data: out });
+  })
+);
 
 /** Records a debtor payment and moves the advance to collected. */
 adminRouter.post(
@@ -735,21 +807,28 @@ async function applyImportUpdate(c: import('pg').PoolClient, i: PlanItem, debtor
   const before = await c.query(`SELECT * FROM factored_invoices WHERE id = $1 FOR UPDATE`, [e.id]);
   const fields = new Set(i.changes.map((ch) => ch.field));
 
-  // Amounts follow the advance rate this advance was funded at, never today's
-  // schedule: the funded terms are a snapshot.
+  // The sheet's Total Advanced when it has one; otherwise amounts follow the
+  // advance rate this advance was funded at, never today's schedule: the
+  // funded terms are a snapshot.
   const face = fields.has('face_amount') ? p.face_amount : e.face_amount;
-  const advance = Math.round(face * e.advance_rate_pct) / 100;
+  const advance = p.advance_amount !== null
+    ? Math.round(p.advance_amount * 100) / 100
+    : Math.round(face * e.advance_rate_pct) / 100;
+  const rate = p.advance_amount !== null ? Math.round((advance / face) * 1_000_000) / 10_000 : e.advance_rate_pct;
   const reserve = Math.round((face - advance) * 100) / 100;
+  const pick = <K extends 'contact_name' | 'sales_person' | 'project'>(k: K) => (fields.has(k) ? p[k] : e[k]);
   await c.query(
     `UPDATE factored_invoices
         SET invoice_number = $2, debtor_id = $3, debtor_name = $4, face_amount = $5, advance_amount = $6,
-            reserve_amount = $7, advanced_on = $8, notes = $9, updated_at = NOW()
+            reserve_amount = $7, advanced_on = $8, notes = $9, advance_rate_pct = $10,
+            contact_name = $11, sales_person = $12, project = $13, updated_at = NOW()
       WHERE id = $1`,
     [e.id, fields.has('invoice_number') ? p.invoice_number : e.invoice_number,
      debtorId, i.debtor.name, face, advance, reserve,
      fields.has('advanced_on') ? p.advanced_on : e.advanced_on,
-     fields.has('notes') ? p.notes : e.notes]);
-  if (fields.has('face_amount') || fields.has('advanced_on')) {
+     fields.has('notes') ? p.notes : e.notes, rate,
+     pick('contact_name'), pick('sales_person'), pick('project')]);
+  if (fields.has('face_amount') || fields.has('advance_amount') || fields.has('advanced_on')) {
     await c.query(
       `UPDATE factoring_events SET amount = $2, occurred_on = $3
         WHERE factored_invoice_id = $1 AND event_type = 'advance'`,
@@ -856,8 +935,13 @@ adminRouter.post(
             company_id: i.client.company_id, debtor_id,
             invoice_number: p.invoice_number,
             face_amount: p.face_amount,
+            advance_amount: p.advance_amount,
             advanced_on: p.advanced_on,
             invoice_due_on: null,
+            // Exactly what the sheet says: blank stays blank.
+            contact_name: p.contact_name,
+            sales_person: p.sales_person,
+            project: p.project,
             fee_schedule_id: null,          // the client's default schedule applies
             invoice_id: null, job_id: null,
             notes: p.notes,
