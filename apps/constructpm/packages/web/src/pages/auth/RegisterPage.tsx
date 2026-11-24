@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { HardHat, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { LedgerMark } from '../../components/brand/LedgerMark';
 import { useAuthStore } from '../../stores/auth.store';
 import { toast } from 'sonner';
 
@@ -52,11 +53,8 @@ export function RegisterPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-900 px-4 py-10">
       <div className="w-full max-w-sm">
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-lg bg-brand-600 flex items-center justify-center">
-            <HardHat className="w-6 h-6 text-white" />
-          </div>
-          <span className="text-2xl font-bold text-white">ConstructPM</span>
+        <div className="flex justify-center mb-8">
+          <LedgerMark tone="dark" size="lg" />
         </div>
 
         <div className="card p-8">

@@ -458,7 +458,7 @@ factoringRouter.post(
     void notify({
       to: OPS_INBOX,
       subject: 'New factoring enquiry',
-      text: `A ConstructPM company has asked about factoring.\n\n`
+      text: `A One Source Ledger company has asked about factoring.\n\n`
           + `Contact: ${b['contact_name']} <${b['contact_email']}>\n`
           + `Phone:   ${b['contact_phone'] ?? '—'}\n`
           + `Monthly volume: ${b['monthly_volume'] ?? '—'}\n\n`

@@ -1,3 +1,9 @@
+// ─── Product ──────────────────────────────────────────────────────────────────
+// The name customers see, in the app, its emails and authenticator apps. The
+// code, packages and servers keep their internal "constructpm" names.
+
+export const PRODUCT_NAME = 'One Source Ledger';
+
 // ─── Enum types ───────────────────────────────────────────────────────────────
 
 export type UserRole =
@@ -305,7 +311,7 @@ export interface Invoice extends Base {
 }
 
 // ─── Invoice tracking ─────────────────────────────────────────────────────────
-// ConstructPM tracks invoices; it does not send them. The contractor bills the
+// The app tracks invoices; it does not send them. The contractor bills the
 // agency however they already do, and records each step here.
 
 export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {

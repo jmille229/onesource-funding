@@ -541,14 +541,14 @@ function ApprovePanel({ id, missingCount, email, existing, onDone, onCancel }: {
       <div>
         <h3>Approve</h3>
         <p className="text-sm text-slate-500 mt-0.5">
-          Creates their company and a login for <strong>{email}</strong> (or links an existing ConstructPM login
+          Creates their company and a login for <strong>{email}</strong> (or links an existing One Source Ledger login
           with that email), makes them an active funding client, and files their documents with the account.
-          Their portal shows Funding only.
+          They sign in to One Source Ledger to log invoices and request funding.
         </p>
       </div>
       {existing && (
         <div className="text-sm text-orange-900 bg-orange-50 border border-orange-200 rounded-md p-3">
-          <p className="font-medium">{email} already has a ConstructPM login — {existing.user_name} at {existing.company_name}.</p>
+          <p className="font-medium">{email} already has a One Source Ledger login — {existing.user_name} at {existing.company_name}.</p>
           <p className="mt-0.5">
             Approving turns funding on for <strong>{existing.company_name}</strong> and files these documents there;
             no new login is created. Only continue if you’ve confirmed with them that this application is theirs.

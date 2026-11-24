@@ -147,7 +147,7 @@ async function start() {
   await connectRedis();
 
   const server = app.listen(env.PORT, () => {
-    console.log(`\n🏗️  ConstructPM API  →  http://localhost:${env.PORT}`);
+    console.log(`\n🏗️  One Source Ledger API  →  http://localhost:${env.PORT}`);
     console.log(`   DB  →  ${env.DATABASE_URL.replace(/:[^:@]*@/, ':***@')}`);
     console.log(`   ENV →  ${env.NODE_ENV}\n`);
   });

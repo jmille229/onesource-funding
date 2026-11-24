@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useAuthStore } from '../../stores/auth.store';
-import logo from '../../assets/onesource-logo.png';
+import { LedgerMark } from '../../components/brand/LedgerMark';
 
 /** /verify-email#token=… — confirms the address on a new account. */
 export function VerifyEmailPage() {
@@ -32,7 +32,7 @@ export function VerifyEmailPage() {
   return (
     <div className="os-brand min-h-[100dvh] flex items-center justify-center bg-os-mist px-4 py-10">
       <div className="w-full max-w-sm">
-        <div className="flex justify-center mb-8"><img src={logo} alt="One Source Funding" className="h-14 w-auto" /></div>
+        <div className="flex justify-center mb-8"><LedgerMark tone="light" size="lg" /></div>
         <div className="card p-6 sm:p-8 text-center space-y-3">
           {state === 'working' && <Loader2 className="w-6 h-6 animate-spin mx-auto text-os-navy" />}
           {state === 'done' && (

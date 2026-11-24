@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { HardHat, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { LedgerMark } from '../../components/brand/LedgerMark';
 import { useAuthStore, type SignInResult } from '../../stores/auth.store';
 import { api } from '../../lib/api';
 import { SecondStep } from '../../components/SecondStep';
@@ -40,12 +41,8 @@ export function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-900 px-4">
       <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-lg bg-brand-600 flex items-center justify-center">
-            <HardHat className="w-6 h-6 text-white" />
-          </div>
-          <span className="text-2xl font-bold text-white">ConstructPM</span>
+        <div className="flex justify-center mb-8">
+          <LedgerMark tone="dark" size="lg" />
         </div>
 
         <div className="card p-8">

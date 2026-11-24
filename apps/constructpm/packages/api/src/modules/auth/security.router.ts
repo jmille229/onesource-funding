@@ -3,6 +3,7 @@ import { z } from 'zod';
 import argon2 from 'argon2';
 import { createHash, randomBytes } from 'crypto';
 import { readPool, writePool, createRlsClient } from '../../lib/db.js';
+import { PRODUCT_NAME } from '@constructpm/shared';
 import { env } from '../../lib/env.js';
 import { notify, mailReady } from '../../lib/mailer.js';
 import { decryptSecret, encryptSecret, secretsConfigured } from '../../lib/secrets.js';
@@ -36,7 +37,7 @@ export const securityRouter = Router();
 
 const hash = (t: string) => createHash('sha256').update(t).digest('hex');
 const newToken = () => randomBytes(32).toString('base64url');
-const ISSUER = 'One Source';
+const ISSUER = PRODUCT_NAME;
 const ARGON2_OPTS: argon2.Options & { raw?: false } = { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4 };
 
 const fail = (status: number, message: string, code?: string) => Object.assign(new Error(message), { status, code });
@@ -64,7 +65,7 @@ securityRouter.post('/password/forgot', authRateLimit,
       if (!(await mailReady())) logger.warn('password reset requested but email is not working — link may not arrive');
       await notify({
         to: u.email,
-        subject: 'Reset your One Source password',
+        subject: `Reset your ${PRODUCT_NAME} password`,
         text: `Hi ${u.first_name},\n\nSomeone asked to reset the password for your account. If it was you, `
             + `set a new one with this link (it works once, for the next hour):\n\n`
             + `${env.APP_URL}/reset-password#token=${token}\n\n`
@@ -86,7 +87,7 @@ export async function sendVerificationEmail(userId: string): Promise<void> {
   if (!u) return;
   await notify({
     to: u.email,
-    subject: 'Confirm your email for One Source',
+    subject: `Confirm your email for ${PRODUCT_NAME}`,
     text: `Hi ${u.first_name},\n\nConfirm this is your email address:\n\n`
         + `${env.APP_URL}/verify-email#token=${token}\n\n`
         + `The link works for 7 days. If you didn't create an account, ignore this email.`,

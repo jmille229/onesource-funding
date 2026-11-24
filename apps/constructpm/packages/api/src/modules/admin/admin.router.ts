@@ -1051,7 +1051,7 @@ adminRouter.post(
  *
  * Clients still send invoices outside the app, and those need to reach the same
  * engine as in-app requests rather than being decided by eye off-system. The
- * request is created with source='operator' and no ConstructPM invoice behind
+ * request is created with source='operator' and no app invoice behind
  * it, then scored identically.
  */
 adminRouter.post(

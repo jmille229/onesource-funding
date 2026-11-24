@@ -292,7 +292,7 @@ const sendInvite = (to: string, firstName: string, link: string) =>
 /**
  * Approve: create (or reuse) the client's company and login, make them an
  * active funding client on the chosen fee schedule, and issue a set-password
- * invite. If the applicant's email already has a ConstructPM login, that
+ * invite. If the applicant's email already has a One Source Ledger login, that
  * company is used and no invite is needed.
  */
 applicationsAdminRouter.post('/applications/:id/approve',

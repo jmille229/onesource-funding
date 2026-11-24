@@ -11,10 +11,10 @@ import { businessToday } from '../../lib/dates.js';
  * for clients signed outside the online application — a referral, a phone
  * call, the existing book.
  *
- * Creating a client makes a company (funding-only portal), a funding client on
- * the chosen terms, and — when there's an email — an owner login with a
- * set-password link, shown to copy and emailed when mail is set up. Mounted
- * under /api/admin, behind operator authentication.
+ * Creating a client makes a company, a funding client on the chosen terms,
+ * and — when there's an email — an owner login with a set-password link,
+ * shown to copy and emailed when mail is set up. Mounted under /api/admin,
+ * behind operator authentication.
  */
 export const clientsAdminRouter = Router();
 
@@ -87,7 +87,7 @@ clientsAdminRouter.post('/clients/new', validate(createSchema), asyncHandler(asy
         `SELECT * FROM admin_login_for_email($1)`, [b.login.email]);
       const found = existing.rows[0];
       if (found && !b.use_existing_login) {
-        throw conflict(`${b.login.email} already signs in to ConstructPM as ${found.user_name} at ${found.company_name}.`,
+        throw conflict(`${b.login.email} already signs in to One Source Ledger as ${found.user_name} at ${found.company_name}.`,
           'login_exists');
       }
       if (found) {

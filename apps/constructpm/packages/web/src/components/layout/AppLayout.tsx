@@ -3,57 +3,41 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, FolderKanban, FileText, Users, BarChart3,
-  LogOut, HardHat, Menu, X, Banknote, Settings,
+  LogOut, Menu, X, Banknote, Settings,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth.store';
 import { api, apiError } from '../../lib/api';
 import { toast } from 'sonner';
 import { useFundingAccount } from '../../lib/funding';
-import logo from '../../assets/onesource-logo.png';
+import { LedgerMark } from '../brand/LedgerMark';
 import { clsx } from 'clsx';
 
 export interface Workspace {
   /** The company has at least one job: shows Reports (job costing). Jobs itself is always there. */
   hasJobs: boolean;
-  /** Whose name is on the app: One Source for clients it onboarded. */
-  brand: 'onesource' | 'constructpm';
 }
 
 /**
  * How this company's app is set up. null while it loads.
  *
- * There is one app: invoices, with funding layered on for companies that
- * factor, and jobs for anyone who wants to group invoices by contract. Jobs is
- * always in the menu and never required on an invoice; the deeper project
- * tools (budgets, tasks, subcontracts) live inside a job and Reports appears
- * once a company has a job. `portal_mode: 'funding'`, set when One Source
- * onboards a client, means the company came through One Source: One Source
- * branding.
+ * There is one app, One Source Ledger: invoices, with funding layered on for
+ * companies that factor, and jobs for anyone who wants to group invoices by
+ * contract. Jobs is always in the menu and never required on an invoice; the
+ * deeper project tools (budgets, tasks, subcontracts) live inside a job and
+ * Reports appears once a company has a job.
  */
 export function useWorkspace(): Workspace | null {
   const user = useAuthStore((s) => s.user);
-  const { data, isError } = useQuery({
-    queryKey: ['company-settings', user?.company_id],
-    queryFn: () => api.get('/settings/company').then((r) => r.data.data as {
-      settings?: { portal_mode?: string; project_tools?: boolean };
-    }),
-    enabled: Boolean(user),
-    staleTime: 5 * 60_000,
-  });
   // Under ['jobs', …], so creating a job (which invalidates ['jobs']) updates it.
-  const { data: jobCount } = useQuery({
+  const { data: jobCount, isError } = useQuery({
     queryKey: ['jobs', 'count'],
     queryFn: () => api.get('/jobs', { params: { per_page: 1 } }).then((r) => Number(r.data.meta?.total ?? 0)),
     enabled: Boolean(user),
     staleTime: 5 * 60_000,
   });
-  if (isError) return { hasJobs: true, brand: 'constructpm' };
-  if (!data) return null;
-  const viaOneSource = data.settings?.portal_mode === 'funding';
-  return {
-    hasJobs: (jobCount ?? 0) > 0,
-    brand: viaOneSource ? 'onesource' : 'constructpm',
-  };
+  if (isError) return { hasJobs: true };
+  if (jobCount === undefined) return null;
+  return { hasJobs: jobCount > 0 };
 }
 
 // Invoices first, then jobs (invoices grouped by contract), funding (the
@@ -73,15 +57,6 @@ const nav: { to: string; icon: typeof FileText; label: string; roles?: string[] 
   { to: '/settings',  icon: Settings,        label: 'Settings', roles: ['owner', 'admin'] },
 ];
 
-/** One Source's logo on a white tile, so it reads on the dark sidebar. */
-function OneSourceMark({ compact }: { compact?: boolean }) {
-  return (
-    <span className={clsx('inline-flex items-center rounded-md bg-white', compact ? 'px-1.5 py-1' : 'px-2 py-1.5')}>
-      <img src={logo} alt="One Source Funding" className={compact ? 'h-6 w-auto' : 'h-8 w-auto'} />
-    </span>
-  );
-}
-
 /** Sidebar contents — identical in the fixed desktop rail and the mobile drawer. */
 function SidebarContent({ onNavigate, ws }: { onNavigate?: () => void; ws: Workspace | null }) {
   const { user, logout } = useAuthStore();
@@ -98,14 +73,7 @@ function SidebarContent({ onNavigate, ws }: { onNavigate?: () => void; ws: Works
   return (
     <>
       <div className="flex items-center gap-2.5 px-5 h-16 border-b border-slate-700 flex-shrink-0">
-        {ws?.brand === 'onesource' ? <OneSourceMark /> : (
-          <>
-            <div className="w-8 h-8 rounded bg-brand-600 flex items-center justify-center flex-shrink-0">
-              <HardHat className="w-5 h-5 text-white" />
-            </div>
-            <span className="font-bold text-base tracking-tight">ConstructPM</span>
-          </>
-        )}
+        <LedgerMark tone="dark" />
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
@@ -241,14 +209,7 @@ export function AppLayout() {
           >
             <Menu className="w-5 h-5" />
           </button>
-          {ws?.brand === 'onesource' ? <OneSourceMark compact /> : (
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded bg-brand-600 flex items-center justify-center">
-                <HardHat className="w-4 h-4 text-white" />
-              </div>
-              <span className="font-bold text-sm tracking-tight">ConstructPM</span>
-            </div>
-          )}
+          <LedgerMark tone="dark" size="sm" />
         </header>
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden">
