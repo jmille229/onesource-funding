@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Plus, X, ChevronDown, ChevronRight, Banknote } from 'lucide-react';
 import { toast } from 'sonner';
@@ -9,7 +9,7 @@ import { uploadInvoiceDocument, canSeeFunding } from '../../lib/invoices';
 import { useFundingAccount, ADVANCE_MAX } from '../../lib/funding';
 import { useAuthStore } from '../../stores/auth.store';
 import { RequestFundingModal } from '../RequestFundingModal';
-import { useWorkspace } from '../layout/AppLayout';
+import { canCreateJobs } from '../../lib/jobs';
 
 type Stage = 'draft' | 'sent' | 'approved';
 
@@ -33,7 +33,6 @@ export function LogInvoiceModal({ onClose, defaultJobId, fund = false }: {
   const qc = useQueryClient();
   const role = useAuthStore((s) => s.user?.role);
   const funding = useFundingAccount();
-  const projectTools = useWorkspace()?.projectTools ?? true;
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
@@ -48,6 +47,9 @@ export function LogInvoiceModal({ onClose, defaultJobId, fund = false }: {
   const [itemize, setItemize] = useState(false);
   const [items, setItems] = useState([{ description: '', quantity: '1', unit_price: '' }]);
   const [file, setFile] = useState<File | null>(null);
+  // "+ New job" from the job picker: a name (and, optionally, the contract value).
+  const [newJob, setNewJob] = useState<{ name: string; contract: string } | null>(null);
+  const [creatingJob, setCreatingJob] = useState(false);
 
   const { data: jobs = [] } = useQuery<JobOption[]>({
     queryKey: ['jobs', 'for-invoice'],
@@ -56,11 +58,43 @@ export function LogInvoiceModal({ onClose, defaultJobId, fund = false }: {
 
   const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
+  // Opened from a job's page: bill the job's agency unless one's already chosen.
+  useEffect(() => {
+    if (!defaultJobId) return;
+    const job = jobs.find((j) => j.id === defaultJobId);
+    if (job?.customer_id) setForm((f) => (f.customer_id ? f : { ...f, customer_id: job.customer_id ?? '' }));
+  }, [jobs, defaultJobId]);
+
   // Picking the job fills in its agency — the usual case — but never overwrites
   // an agency the user already chose.
   const pickJob = (jobId: string) => {
+    if (jobId === '__new') { setNewJob({ name: '', contract: '' }); return; }
+    setNewJob(null);
     const job = jobs.find((j) => j.id === jobId);
     setForm((f) => ({ ...f, job_id: jobId, customer_id: f.customer_id || job?.customer_id || '' }));
+  };
+
+  // Create the job without leaving the form, for the agency already chosen.
+  const createJob = async () => {
+    if (!newJob?.name.trim()) { toast.error('Give the job a name'); return; }
+    setCreatingJob(true);
+    try {
+      const contract = parseFloat(newJob.contract);
+      const r = await api.post('/jobs', {
+        name: newJob.name.trim(), status: 'active', customer_id: form.customer_id || null,
+        ...(contract > 0 ? { contract_amount: contract } : {}),
+      });
+      const job = r.data.data as JobOption;
+      qc.setQueryData<JobOption[]>(['jobs', 'for-invoice'], (old) => [...(old ?? []), job]);
+      void qc.invalidateQueries({ queryKey: ['jobs'] });
+      setForm((f) => ({ ...f, job_id: job.id }));
+      setNewJob(null);
+      toast.success(`Job ${job.job_number} created`);
+    } catch (err) {
+      toast.error(apiError(err, 'Could not create the job'));
+    } finally {
+      setCreatingJob(false);
+    }
   };
 
   const itemsTotal = items.reduce((s, i) => s + (parseFloat(i.quantity) || 0) * (parseFloat(i.unit_price) || 0), 0);
@@ -70,6 +104,7 @@ export function LogInvoiceModal({ onClose, defaultJobId, fund = false }: {
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.customer_id) { toast.error('Choose the agency you billed'); return; }
+    if (newJob) { toast.error('Create the new job, or cancel it, first'); return; }
     const amount = parseFloat(form.amount);
     if (!itemize && !(amount > 0)) { toast.error('Enter the invoice amount'); return; }
     if (itemize && items.some((i) => !i.description.trim() || !i.unit_price)) {
@@ -107,6 +142,7 @@ export function LogInvoiceModal({ onClose, defaultJobId, fund = false }: {
         }
       }
       qc.invalidateQueries({ queryKey: ['invoices'] });
+      if (form.job_id) qc.invalidateQueries({ queryKey: ['jobs'] });
       if (form.stage === 'approved' && form.fund_now && canFund) {
         toast.success('Invoice logged — now the funding request');
         setToFund({ id: created.id, invoice_number: created.invoice_number, total: created.total });
@@ -154,15 +190,35 @@ export function LogInvoiceModal({ onClose, defaultJobId, fund = false }: {
                      onChange={(e) => set('contract_reference', e.target.value)}
                      placeholder="Optional" />
             </div>
-            {projectTools && (jobs.length > 0 || defaultJobId) && (
-              <div>
-                <label className="label" htmlFor="li-job">Job</label>
-                <select id="li-job" className="input" value={form.job_id} onChange={(e) => pickJob(e.target.value)}>
-                  <option value="">None</option>
-                  {jobs.map((j) => <option key={j.id} value={j.id}>{j.job_number} — {j.name}</option>)}
-                </select>
-              </div>
-            )}
+            <div className={newJob ? 'sm:col-span-2' : undefined}>
+              <label className="label" htmlFor="li-job">Job <span className="font-normal text-slate-400">(optional)</span></label>
+              <select id="li-job" className="input" value={newJob ? '__new' : form.job_id} onChange={(e) => pickJob(e.target.value)}>
+                <option value="">None</option>
+                {jobs.map((j) => <option key={j.id} value={j.id}>{j.job_number} — {j.name}</option>)}
+                {canCreateJobs(role) && <option value="__new">+ New job…</option>}
+              </select>
+              {newJob && (
+                <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-3 space-y-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input className="input sm:col-span-2" value={newJob.name} maxLength={200} autoFocus
+                           placeholder="Job name, e.g. Fort Bragg barracks renovation" aria-label="New job name"
+                           onChange={(e) => setNewJob({ ...newJob, name: e.target.value })}
+                           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void createJob(); } }} />
+                    <input className="input" type="number" min="0" step="0.01" value={newJob.contract}
+                           placeholder="Contract value (optional)" aria-label="Contract value"
+                           onChange={(e) => setNewJob({ ...newJob, contract: e.target.value })}
+                           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void createJob(); } }} />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" className="btn-primary btn-sm" disabled={creatingJob} onClick={() => void createJob()}>
+                      {creatingJob && <Loader2 className="w-4 h-4 animate-spin" />} Create job
+                    </button>
+                    <button type="button" className="btn-ghost btn-sm" onClick={() => setNewJob(null)}>Cancel</button>
+                    <span className="text-xs text-slate-500">Add dates and other details later on the job’s page.</span>
+                  </div>
+                </div>
+              )}
+            </div>
             <div>
               <label className="label" htmlFor="li-num">Your invoice number{funding_now(form, canFund) ? ' *' : ''}</label>
               <input id="li-num" className="input" value={form.invoice_number} maxLength={50}
@@ -259,7 +315,7 @@ export function LogInvoiceModal({ onClose, defaultJobId, fund = false }: {
             </div>
           </div>
 
-          {projectTools && <div>
+          {(form.job_id || itemize) && <div>
             <button type="button" className="text-sm font-medium text-brand-600 hover:underline inline-flex items-center gap-1"
                     onClick={() => setItemize((v) => !v)} aria-expanded={itemize}>
               {itemize ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Outlet, NavLink, Navigate, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, FolderKanban, FileText, Users, BarChart3,
@@ -13,8 +13,8 @@ import logo from '../../assets/onesource-logo.png';
 import { clsx } from 'clsx';
 
 export interface Workspace {
-  /** Jobs, budgets, tasks, subcontracts, time and project reports. */
-  projectTools: boolean;
+  /** The company has at least one job: shows Reports (job costing). Jobs itself is always there. */
+  hasJobs: boolean;
   /** Whose name is on the app: One Source for clients it onboarded. */
   brand: 'onesource' | 'constructpm';
 }
@@ -23,10 +23,12 @@ export interface Workspace {
  * How this company's app is set up. null while it loads.
  *
  * There is one app: invoices, with funding layered on for companies that
- * factor. The project tools are an add-on, switched on in Settings
- * (`project_tools`; unset = off — V018 switched them on for companies already
- * using them). `portal_mode: 'funding'`, set when One Source onboards a
- * client, means the company came through One Source: One Source branding.
+ * factor, and jobs for anyone who wants to group invoices by contract. Jobs is
+ * always in the menu and never required on an invoice; the deeper project
+ * tools (budgets, tasks, subcontracts) live inside a job and Reports appears
+ * once a company has a job. `portal_mode: 'funding'`, set when One Source
+ * onboards a client, means the company came through One Source: One Source
+ * branding.
  */
 export function useWorkspace(): Workspace | null {
   const user = useAuthStore((s) => s.user);
@@ -38,24 +40,28 @@ export function useWorkspace(): Workspace | null {
     enabled: Boolean(user),
     staleTime: 5 * 60_000,
   });
-  if (isError) return { projectTools: true, brand: 'constructpm' };
+  // Under ['jobs', …], so creating a job (which invalidates ['jobs']) updates it.
+  const { data: jobCount } = useQuery({
+    queryKey: ['jobs', 'count'],
+    queryFn: () => api.get('/jobs', { params: { per_page: 1 } }).then((r) => Number(r.data.meta?.total ?? 0)),
+    enabled: Boolean(user),
+    staleTime: 5 * 60_000,
+  });
+  if (isError) return { hasJobs: true, brand: 'constructpm' };
   if (!data) return null;
   const viaOneSource = data.settings?.portal_mode === 'funding';
   return {
-    projectTools: data.settings?.project_tools === true,
+    hasJobs: (jobCount ?? 0) > 0,
     brand: viaOneSource ? 'onesource' : 'constructpm',
   };
 }
 
-/** Screens that belong to the project tools. */
-const PROJECT_PATHS = ['/jobs', '/reports'];
-export const isProjectPath = (path: string) => PROJECT_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
-
-// Invoices first, funding right after (it's the layer on them), then the
-// project tools when they're on.
+// Invoices first, then jobs (invoices grouped by contract), funding (the
+// layer on invoices), contacts, and Reports once there are jobs to report on.
 const nav: { to: string; icon: typeof FileText; label: string; roles?: string[] }[] = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/invoices',  icon: FileText,        label: 'Invoices' },
+  { to: '/jobs',      icon: FolderKanban,    label: 'Jobs' },
   // Funding shows the company's factoring position, so it is limited to the
   // finance-facing roles. The API enforces the same set independently. It is
   // "Funding" for a company that factors and "Get paid now" for one that
@@ -63,7 +69,6 @@ const nav: { to: string; icon: typeof FileText; label: string; roles?: string[] 
   { to: '/funding',   icon: Banknote,        label: 'Funding',
     roles: ['owner', 'admin', 'accountant'] },
   { to: '/contacts',  icon: Users,           label: 'Contacts' },
-  { to: '/jobs',      icon: FolderKanban,    label: 'Jobs' },
   { to: '/reports',   icon: BarChart3,       label: 'Reports' },
   { to: '/settings',  icon: Settings,        label: 'Settings', roles: ['owner', 'admin'] },
 ];
@@ -83,9 +88,9 @@ function SidebarContent({ onNavigate, ws }: { onNavigate?: () => void; ws: Works
   const funding = useFundingAccount();
   // Funding is part of the product only for a company that factors. Everyone
   // else sees the way in instead, and nothing while that's being worked out.
-  // The project screens show only with the project tools on.
+  // Reports is job costing: it shows once the company has a job.
   const items = nav
-    .filter((n) => !isProjectPath(n.to) || ws?.projectTools)
+    .filter((n) => n.to !== '/reports' || ws?.hasJobs)
     .filter((n) => n.to !== '/funding' || funding.isClient || funding.isProspect)
     .map((n) => (n.to === '/funding' && !funding.isClient
       ? { ...n, label: 'Get paid now', invite: true } : { ...n, invite: false }));
@@ -248,12 +253,9 @@ export function AppLayout() {
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden">
           <ConfirmEmailBanner />
-          {/* Project tools off: their screens lead to Invoices, the home screen. */}
           {ws === null
             ? <div className="p-10 flex justify-center"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-slate-400" /></div>
-            : !ws.projectTools && isProjectPath(location.pathname)
-              ? <Navigate to="/invoices" replace />
-              : <Outlet />}
+            : <Outlet />}
         </main>
       </div>
     </div>

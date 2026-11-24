@@ -125,6 +125,13 @@ export interface Job extends Base {
   actual_cost?: number;
   committed_cost?: number;
   invoiced_amount?: number;
+  // Billing, from the job's invoices (GET /jobs; see api lib/job-billing.ts)
+  invoice_count?: number;
+  draft_count?: number;
+  billed?: number | string;
+  paid?: number | string;
+  outstanding?: number | string;
+  funded?: number | string;
 }
 
 // ─── Budget ───────────────────────────────────────────────────────────────────

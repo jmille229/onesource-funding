@@ -74,7 +74,7 @@ export function BudgetPage() {
       setItems(null);
       setDirty(false);
       qc.invalidateQueries({ queryKey: ['budget', jobId] });
-      qc.invalidateQueries({ queryKey: ['job-summary', jobId] });
+      qc.invalidateQueries({ queryKey: ['invoices', 'job-summary', jobId] });
     },
     onError: () => toast.error('Failed to save budget'),
   });

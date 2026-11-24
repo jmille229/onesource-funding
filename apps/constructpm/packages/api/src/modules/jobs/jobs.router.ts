@@ -4,6 +4,7 @@ import { writePool, readPool, createRlsClient, withTransaction } from '../../lib
 import { buildUpdateSet } from '../../lib/sql.js';
 import { parsePagination, escapeLike } from '../../lib/pagination.js';
 import { asyncHandler, validate, requireRole } from '../../middleware/index.js';
+import { JOB_BILLING_JOIN, JOB_BILLING_COLUMNS } from '../../lib/job-billing.js';
 
 export const jobsRouter = Router();
 
@@ -31,6 +32,7 @@ const jobSchema = z.object({
 // Postgres returns SUM()/COUNT() as strings, not numbers.
 type JobFinancialRow = { budget: string; price: string; committed: string; actual: string; invoiced: string };
 type JobTaskCountRow = { total: string; completed: string; in_progress: string };
+type JobBillingRow = { contract_amount: string | null; invoice_count: number; draft_count: number; billed: string; paid: string; outstanding: string; funded: string };
 
 // SECURITY: Explicit allowlist for the dynamic PATCH. Zod already strips unknown
 // keys, but naming the columns here means the SET clause can never depend on the
@@ -65,11 +67,13 @@ jobsRouter.get('/', asyncHandler(async (req, res) => {
   const [rows, cnt] = await Promise.all([
     db.query(
       `SELECT j.*, c.name AS customer_name, u.first_name||' '||u.last_name AS project_manager_name,
-        COALESCE(b.total_budget,0) AS total_budget, COALESCE(b.total_price,0) AS total_price
+        COALESCE(b.total_budget,0) AS total_budget, COALESCE(b.total_price,0) AS total_price,
+        ${JOB_BILLING_COLUMNS}
        FROM jobs j
        LEFT JOIN contacts c ON c.id=j.customer_id
        LEFT JOIN users u ON u.id=j.project_manager_id
        LEFT JOIN (SELECT job_id,SUM(ext_cost) AS total_budget,SUM(ext_price) AS total_price FROM budget_items WHERE deleted_at IS NULL GROUP BY job_id) b ON b.job_id=j.id
+       ${JOB_BILLING_JOIN}
        WHERE ${conds.join(' AND ')} ORDER BY j.created_at DESC LIMIT $${params.length-1} OFFSET $${params.length}`,
       params
     ),
@@ -155,16 +159,27 @@ jobsRouter.delete('/:id', requireRole('owner','admin'), asyncHandler(async (req,
 // GET /api/jobs/:id/summary
 jobsRouter.get('/:id/summary', asyncHandler(async (req, res) => {
   const db = createRlsClient(readPool, req.auth.companyId);
-  const [fin, tasks] = await Promise.all([
+  const [fin, tasks, bill] = await Promise.all([
     db.query<JobFinancialRow>(`SELECT COALESCE(SUM(bi.ext_cost),0) budget,COALESCE(SUM(bi.ext_price),0) price,COALESCE(SUM(d.committed_amount),0) committed,COALESCE(SUM(d.actual_amount),0) actual,COALESCE(SUM(d.invoiced_amount),0) invoiced FROM budget_items bi LEFT JOIN budget_item_depletion_summary d ON d.budget_item_id=bi.id WHERE bi.job_id=$1 AND bi.deleted_at IS NULL`,[req.params['id']]),
     db.query<JobTaskCountRow>(`SELECT COUNT(*) total,COUNT(*) FILTER (WHERE status='completed') completed,COUNT(*) FILTER (WHERE status='in_progress') in_progress FROM tasks WHERE job_id=$1 AND deleted_at IS NULL`,[req.params['id']]),
+    db.query<JobBillingRow>(`SELECT j.contract_amount, ${JOB_BILLING_COLUMNS} FROM jobs j ${JOB_BILLING_JOIN} WHERE j.id=$1`,[req.params['id']]),
   ]);
   // Both aggregates always return one row, but defaulting keeps the response
   // numeric rather than NaN if a query ever comes back empty.
   const f = fin.rows[0]   ?? { budget:'0', price:'0', committed:'0', actual:'0', invoiced:'0' };
   const t = tasks.rows[0] ?? { total:'0', completed:'0', in_progress:'0' };
   const totalTasks = Number(t.total);
+  const bl = bill.rows[0];
+  const billed = Number(bl?.billed ?? 0);
+  const contract = bl?.contract_amount == null ? null : Number(bl.contract_amount);
   res.json({ data: {
+    billing: {
+      contract_amount: contract,
+      billed, paid: Number(bl?.paid ?? 0), outstanding: Number(bl?.outstanding ?? 0), funded: Number(bl?.funded ?? 0),
+      invoice_count: bl?.invoice_count ?? 0, draft_count: bl?.draft_count ?? 0,
+      // Null without a contract value; negative means billed past it.
+      left_to_bill: contract === null ? null : Math.round((contract - billed) * 100) / 100,
+    },
     financial: { budget: Number(f.budget), price: Number(f.price), committed: Number(f.committed), actual: Number(f.actual), invoiced: Number(f.invoiced) },
     tasks: { total: totalTasks, completed: Number(t.completed), in_progress: Number(t.in_progress), pct: totalTasks ? Math.round(Number(t.completed)/totalTasks*100) : 0 },
   } });
